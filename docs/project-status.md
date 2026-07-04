@@ -195,7 +195,7 @@ M5  ×    0%  未做
 | ID | 任务 | 状态 | 关联 |
 |----|------|------|------|
 | **M1-T1** | LLM Provider 抽象实现:OpenAI/DeepSeek provider(S1.3.1/S1.3.2) | √ | `ed637c7` |
-| ~~M1-T2~~ | ~~LLM Provider 抽象实现:Ollama provider~~ | ~~×~~ | ~~已取消：项目不再支持 Ollama~~ |
+| ~~M1-T2~~ | ~~LLM Provider 抽象实现:Ollama provider~~ | ~~×~~ | ~~`ce8a93b` 已取消~~ |
 | **M1-T3** | LlmRouter:按配置路由 provider(S1.3.1) | ○ | — |
 | **M1-T4** | Brain:单步 Planner(Goal → 单 Task)(S1.1.1/S1.2.1) | × | — |
 | **M1-T5** | Dispatcher:进程内优先级队列(S3.1.1) | × | — |
