@@ -6,12 +6,14 @@
 //!
 //! 两者可经配置切换,具体实现留待 M1(Docker)/ M3(Firecracker)。
 
-#![allow(dead_code)]
+pub mod docker;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use axon_core::{Error, Result, VmId};
+
+pub use docker::DockerProvider;
 
 /// VM 资源规格 / resource spec for a microVM/container.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -93,36 +95,6 @@ pub trait IsolationProvider: Send + Sync {
 
     /// 销毁 VM / destroy the VM, releasing all resources.
     async fn destroy(&self, vm: VmHandle) -> Result<()>;
-}
-
-/// 占位 Docker provider / placeholder Docker backend.
-pub struct DockerProvider;
-
-#[async_trait]
-impl IsolationProvider for DockerProvider {
-    fn backend(&self) -> Backend {
-        Backend::Docker
-    }
-    async fn create_vm(&self, _spec: VmSpec) -> Result<VmHandle> {
-        Err(Error::Isolation(
-            "DockerProvider not yet implemented (skeleton)".into(),
-        ))
-    }
-    async fn exec(&self, _vm: &VmHandle, _cmd: Command) -> Result<ExecOutput> {
-        Err(Error::Isolation(
-            "DockerProvider not yet implemented (skeleton)".into(),
-        ))
-    }
-    async fn snapshot(&self, _vm: &VmHandle) -> Result<Snapshot> {
-        Err(Error::Isolation(
-            "Docker does not support snapshot (skeleton)".into(),
-        ))
-    }
-    async fn destroy(&self, _vm: VmHandle) -> Result<()> {
-        Err(Error::Isolation(
-            "DockerProvider not yet implemented (skeleton)".into(),
-        ))
-    }
 }
 
 /// 占位 Firecracker provider / placeholder Firecracker backend.

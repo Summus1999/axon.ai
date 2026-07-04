@@ -8,12 +8,20 @@
 //!
 //! 通过 [`MemoryStore`] trait 抽象,用户可经 CLI / Web 调节记忆权重与遗忘。
 
-#![allow(dead_code)]
+pub mod hybrid;
+pub mod in_memory;
+pub mod qdrant_store;
+pub mod redb_store;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use axon_core::{Id, MemoryId, Result, Timestamp};
+
+pub use hybrid::HybridMemoryStore;
+pub use in_memory::InMemoryStore;
+pub use qdrant_store::QdrantStore;
+pub use redb_store::RedbStore;
 
 /// 记忆类别 / memory category (分层)。
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

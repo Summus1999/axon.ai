@@ -5,13 +5,17 @@
 //!
 //! 一期为进程内队列 + 调度器;二期(M4)接入 NATS 支持跨节点。
 
-#![allow(dead_code)]
+pub mod in_process_queue;
+pub mod simple_scheduler;
 
 use async_trait::async_trait;
 
 use axon_core::{Result, TaskId};
 use axon_isolation::VmHandle;
 use axon_proto::{Task, TaskState};
+
+pub use in_process_queue::InProcessQueue;
+pub use simple_scheduler::SimpleScheduler;
 
 /// 任务队列抽象 / the task queue trait.
 #[async_trait]
@@ -71,31 +75,4 @@ pub struct RunningTask {
     pub task: Task,
     pub vm: VmHandle,
     pub attempt: u8,
-}
-
-/// 占位:进程内队列(M1 实现)/ placeholder in-process queue.
-pub struct InProcessQueue;
-
-#[async_trait]
-impl TaskQueue for InProcessQueue {
-    async fn enqueue(&self, _task: Task) -> Result<()> {
-        Err(axon_core::Error::Dispatcher(
-            "InProcessQueue not yet implemented (skeleton, M1)".into(),
-        ))
-    }
-    async fn dequeue(&self) -> Result<Task> {
-        Err(axon_core::Error::Dispatcher(
-            "InProcessQueue not yet implemented (skeleton, M1)".into(),
-        ))
-    }
-    async fn update_state(&self, _id: &TaskId, _state: TaskState) -> Result<()> {
-        Err(axon_core::Error::Dispatcher(
-            "InProcessQueue not yet implemented (skeleton, M1)".into(),
-        ))
-    }
-    async fn subscribe(&self) -> Result<axon_core::Id> {
-        Err(axon_core::Error::Dispatcher(
-            "InProcessQueue not yet implemented (skeleton, M1)".into(),
-        ))
-    }
 }

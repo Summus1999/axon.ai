@@ -9,7 +9,15 @@ description = "axon.ai 记忆大脑 / memory brain: 短期/长期记忆与用户
 
 [dependencies]
 axon-core.workspace = true
+axon-llm.workspace = true
 async-trait.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+qdrant-client.workspace = true
+redb.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
+testcontainers.workspace = true

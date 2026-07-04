@@ -1,9 +1,20 @@
 //! axon-cli — axon.ai 命令行控制面 / the CLI control plane.
 //!
 //! 二进制入口 `axon`,提供任务下发、状态查询、记忆管理等命令。
-//! 骨架阶段仅注册子命令并打印占位信息;M1 起逐步接入各子系统。
+//! M2 实现 `axon run --goal` 使用 HybridMemoryStore(redb + Qdrant)，
+//! 并支持 `axon memory list/forget/adjust/init`。
+
+use std::path::PathBuf;
+use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
+
+use axon_brain::{CommandAgent, Goal, Planner, SimplePlanner};
+use axon_dispatcher::{InProcessQueue, Scheduler, SchedulerConfig, SimpleScheduler};
+use axon_isolation::DockerProvider;
+use axon_memory::{
+    HybridMemoryStore, MemoryFilter, MemoryKind, MemoryStore, QdrantStore, RedbStore,
+};
 
 #[derive(Parser, Debug)]
 #[command(name = "axon", version, about = "axon.ai — AI harness 开发框架 CLI", long_about = None)]
@@ -37,8 +48,20 @@ enum Commands {
 
 #[derive(Subcommand, Debug)]
 enum MemoryAction {
+    /// 初始化记忆存储（创建 redb 文件与 Qdrant collection）/ init memory stores.
+    Init,
     /// 列出记忆 / list memories.
-    List,
+    List {
+        /// 按类别过滤: short_term | episodic | semantic | user_profile
+        #[arg(short, long)]
+        kind: Option<String>,
+        /// 按来源过滤
+        #[arg(short, long)]
+        source: Option<String>,
+        /// 最小权重
+        #[arg(long)]
+        min_weight: Option<f32>,
+    },
     /// 遗忘一条记忆 / forget a memory.
     Forget { id: String },
     /// 调节权重 / adjust a memory's weight.
@@ -53,29 +76,185 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt().with_env_filter(level).init();
 
     match cli.command {
-        Commands::Run { goal } => {
-            tracing::info!(%goal, "提交任务 (skeleton, M1 将接入 dispatcher)");
-            println!(
-                "✓ 已收到任务:\n  {}\n\n(骨架阶段:实际调度留待 M1 实现)",
-                goal
-            );
-        }
+        Commands::Run { goal } => run_goal(&goal).await?,
         Commands::Tasks => {
-            println!("(骨架阶段:任务列表留待 M1 实现)");
+            println!("(M1:任务列表留待后续实现，当前调度器为进程内队列)");
         }
-        Commands::Memory { action } => match action {
-            MemoryAction::List => println!("(骨架阶段:记忆列表留待 M2 实现)"),
-            MemoryAction::Forget { id } => {
-                println!("(骨架阶段:遗忘 `{}` 留待 M2 实现)", id);
-            }
-            MemoryAction::Adjust { id, weight } => {
-                println!("(骨架阶段:调节 `{}` -> {:.2} 留待 M2 实现)", id, weight);
-            }
-        },
+        Commands::Memory { action } => handle_memory(action).await?,
         Commands::Vms => {
-            println!("(骨架阶段:VM 列表留待 M1/M3 实现)");
+            println!("(M1/M3:VM 列表留待实现)");
         }
     }
 
     Ok(())
+}
+
+/// 读取记忆相关环境变量 / read memory-related environment variables.
+fn memory_config() -> (PathBuf, String, String) {
+    let redb_path = std::env::var("AXON_MEMORY_REDB_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from(".axon/memory.redb"));
+    let qdrant_url =
+        std::env::var("AXON_MEMORY_QDRANT_URL").unwrap_or_else(|_| "http://localhost:6334".into());
+    let qdrant_collection =
+        std::env::var("AXON_MEMORY_QDRANT_COLLECTION").unwrap_or_else(|_| "axon_memories".into());
+    (redb_path, qdrant_url, qdrant_collection)
+}
+
+/// 创建 HybridMemoryStore / create a hybrid memory store from env config.
+async fn create_memory_store() -> anyhow::Result<HybridMemoryStore<RedbStore, QdrantStore>> {
+    let (redb_path, qdrant_url, qdrant_collection) = memory_config();
+    let embedder: std::sync::Arc<dyn axon_llm::EmbeddingProvider> =
+        axon_llm::create_embedding_provider_from_env()
+            .map_err(|e| anyhow::anyhow!("failed to create embedding provider: {e}"))?
+            .into();
+
+    let semantic = RedbStore::new(&redb_path)
+        .map_err(|e| anyhow::anyhow!("failed to open redb store: {e}"))?;
+    let episodic = QdrantStore::new(qdrant_url, qdrant_collection, embedder)
+        .await
+        .map_err(|e| anyhow::anyhow!("failed to connect Qdrant store: {e}"))?;
+
+    Ok(HybridMemoryStore::new(semantic, episodic))
+}
+
+/// 处理 memory 子命令 / handle memory subcommands.
+async fn handle_memory(action: MemoryAction) -> anyhow::Result<()> {
+    match action {
+        MemoryAction::Init => {
+            let store = create_memory_store().await?;
+            // 通过 store 一条空操作验证两端都可用。
+            let list = store.list(&MemoryFilter::default()).await?;
+            println!("✓ 记忆存储初始化完成，当前共有 {} 条记忆", list.len());
+        }
+        MemoryAction::List {
+            kind,
+            source,
+            min_weight,
+        } => {
+            let store = create_memory_store().await?;
+            let filter = MemoryFilter {
+                kind: kind.as_deref().and_then(parse_memory_kind),
+                source,
+                min_weight,
+            };
+            let memories = store.list(&filter).await?;
+            println!("共 {} 条记忆:", memories.len());
+            for m in memories {
+                println!(
+                    "  [{}] {} | kind={:?} | weight={:.2} | source={:?}",
+                    m.id, m.content, m.kind, m.weight, m.source
+                );
+            }
+        }
+        MemoryAction::Forget { id } => {
+            let store = create_memory_store().await?;
+            store.forget(&id).await?;
+            println!("✓ 已遗忘记忆 {}", id);
+        }
+        MemoryAction::Adjust { id, weight } => {
+            let store = create_memory_store().await?;
+            store.adjust_weight(&id, weight).await?;
+            println!("✓ 已调节记忆 {} 权重为 {:.2}", id, weight);
+        }
+    }
+    Ok(())
+}
+
+/// 将字符串解析为 MemoryKind / parse a memory kind string.
+fn parse_memory_kind(s: &str) -> Option<MemoryKind> {
+    match s {
+        "short_term" => Some(MemoryKind::ShortTerm),
+        "episodic" => Some(MemoryKind::Episodic),
+        "semantic" => Some(MemoryKind::Semantic),
+        "user_profile" => Some(MemoryKind::UserProfile),
+        _ => None,
+    }
+}
+
+/// 执行单个目标 / execute a single goal end-to-end.
+///
+/// 构造 Planner、Scheduler、Agent、LLM、Memory 等组件并跑通调度链路。
+async fn run_goal(goal: &str) -> anyhow::Result<()> {
+    tracing::info!(%goal, "提交任务");
+
+    let llm = axon_llm::create_provider_from_env()
+        .map_err(|e| anyhow::anyhow!("failed to create LLM provider: {e}"))?;
+    let memory = Arc::new(create_memory_store().await?);
+    let planner = SimplePlanner::new();
+
+    let plan = planner
+        .plan(
+            &Goal {
+                description: goal.into(),
+                context: vec![],
+            },
+            &*memory,
+            &*llm,
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("planning failed: {e}"))?;
+
+    tracing::info!(task_count = plan.tasks.len(), "规划完成");
+
+    let queue = Arc::new(InProcessQueue::new());
+    let isolation = Arc::new(DockerProvider::new());
+    let agent = Arc::new(CommandAgent::new());
+    let scheduler = SimpleScheduler::new(
+        queue,
+        isolation,
+        agent,
+        llm,
+        memory,
+        SchedulerConfig {
+            max_concurrency: 1,
+            task_timeout_secs: 60,
+            max_retries: 0,
+        },
+    );
+
+    scheduler
+        .submit(plan.tasks, plan.dependencies)
+        .await
+        .map_err(|e| anyhow::anyhow!("submit failed: {e}"))?;
+
+    scheduler
+        .run()
+        .await
+        .map_err(|e| anyhow::anyhow!("scheduler failed: {e}"))?;
+
+    let results = scheduler.results().await;
+    println!("✓ 任务调度完成，共 {} 个结果", results.len());
+    for r in results {
+        println!(
+            "  - 任务 {}: exit_code={}\n    stdout: {}\n    stderr: {}",
+            r.task_id, r.exit_code, r.stdout, r.stderr
+        );
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+
+    use super::*;
+
+    /// 验证 CLI 能正确解析 `run --goal` 参数。
+    #[test]
+    fn cli_parses_run_command() {
+        let cli = Cli::parse_from(["axon", "run", "--goal", "create a file"]);
+        match cli.command {
+            Commands::Run { goal } => assert_eq!(goal, "create a file"),
+            _ => panic!("expected Run command"),
+        }
+    }
+
+    /// 验证 kind 字符串解析。
+    #[test]
+    fn parse_kind_works() {
+        assert_eq!(parse_memory_kind("semantic"), Some(MemoryKind::Semantic));
+        assert_eq!(parse_memory_kind("unknown"), None);
+    }
 }

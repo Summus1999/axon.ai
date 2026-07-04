@@ -30,15 +30,11 @@ pub type VmId = Id;
 /// 时间戳(Unix 毫秒)/ timestamp in Unix milliseconds.
 pub type Timestamp = u64;
 
-/// 标准化标识生成(占位)/ standardized id generation (placeholder).
-/// TODO(M1): 替换为 ULID。
+/// 标准化标识生成 / standardized id generation.
+///
+/// 使用 UUID v4，保证全局唯一且无需中心协调。
 pub fn new_id() -> Id {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0);
-    format!("id-{ms}")
+    uuid::Uuid::new_v4().to_string()
 }
 
 /// 框架全局版本号 / framework version string.

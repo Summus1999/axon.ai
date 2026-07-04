@@ -13,6 +13,13 @@ path = "src/main.rs"
 
 [dependencies]
 axon-core.workspace = true
+axon-llm.workspace = true
+axon-memory.workspace = true
+axon-brain.workspace = true
+axon-dispatcher.workspace = true
+axon-isolation.workspace = true
+axon-proto.workspace = true
+axon-worker.workspace = true
 clap.workspace = true
 anyhow.workspace = true
 tokio.workspace = true

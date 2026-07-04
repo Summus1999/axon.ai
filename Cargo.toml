@@ -28,7 +28,7 @@ authors = ["axon.ai contributors"]
 # firec-rs、async-nats、tonic 等)。
 [workspace.dependencies]
 # 异步运行时 / async runtime
-tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "process", "time"] }
 
 # 序列化 / serialization
 serde = { version = "1", features = ["derive"] }
@@ -41,6 +41,13 @@ anyhow = "1"
 # 异步 trait / async trait
 async-trait = "0.1"
 
+# HTTP 客户端 / HTTP client
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
+# Futures / stream 工具
+futures = "0.3"
+futures-util = "0.3"
+
 # 日志追踪 / tracing
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -48,6 +55,18 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # 配置 / config
 figment = { version = "0.10", features = ["toml", "env"] }
 toml = "0.8"
+
+# 标识符 / identifiers
+uuid = { version = "1", features = ["v4"] }
+
+# 向量数据库 / vector database
+qdrant-client = "1.13"
+
+# 本地嵌入式 KV / embedded KV
+redb = "2.4"
+
+# 集成测试容器 / integration test containers
+testcontainers = "0.23"
 
 # CLI
 clap = { version = "4", features = ["derive"] }
