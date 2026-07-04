@@ -54,6 +54,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # 配置 / config
 figment = { version = "0.10", features = ["toml", "env"] }
+dotenvy = "0.15"
 toml = "0.8"
 
 # 标识符 / identifiers
