@@ -276,6 +276,7 @@ pub trait MemoryStore: Send + Sync {
     async fn forget(&self, id: MemoryId) -> Result<()>;
     async fn list(&self, filter: &MemoryFilter) -> Result<Vec<Memory>>; // 记忆管理
     async fn adjust_weight(&self, id: MemoryId, weight: f32) -> Result<()>; // 调节
+    async fn decay_weights(&self, half_life_days: f32) -> Result<()>; // 权重衰减
 }
 ```
 
@@ -284,6 +285,10 @@ pub trait MemoryStore: Send + Sync {
 - **情景记忆 (Episodic)**: Qdrant 向量检索,过往任务/对话片段
 - **语义记忆 (Semantic)**: redb 存结构化事实(用户偏好、项目约定)
 - **用户画像**: 单独维护,高权重,长期沉淀开发特点
+
+**Embedding Provider**:
+- `OpenAiEmbeddingProvider`:OpenAI `text-embedding-3-small`
+- `GlmEmbeddingProvider`:GLM(Zhipu AI) `embedding-3`,与 OpenAI 接口兼容
 
 **对比**:
 
@@ -511,17 +516,18 @@ pub struct FirecrackerProvider { /* 生产 */ }
 - `axon-cli`: `axon run --goal "..."` 跑通端到端
 - **验收**: `cargo test --workspace` 通过；CLI 下发任务 → 启 Docker 容器 → agent 执行 → 返回结果
 
-### M2 — 记忆系统 (Memory) ○ 进行中
-- `axon-core`: ID 统一为 UUID v4
-- `axon-llm`: 新增 `EmbeddingProvider` trait + OpenAI 实现
+### M2 — 记忆系统 (Memory) √ 已交付
+- `axon-core`: 配置新增 `memory.backend` / `qdrant_url` / `kv_path` / `qdrant_collection`
+- `axon-llm`: 新增 `EmbeddingProvider` trait + OpenAI/GLM 实现
 - `axon-memory`:
-  - `RedbStore`: 语义/用户画像/短期记忆的本地 KV 实现
+  - `RedbStore`: 语义/用户画像/短期记忆的本地 KV 实现,支持权重衰减
   - `QdrantStore`: 情景记忆的向量存储与召回
   - `HybridMemoryStore`: 按 `MemoryKind` 路由的统一 `MemoryStore`
-- `axon-brain`: `SimplePlanner` / `CommandAgent` 规划/生成前 `recall` 相关记忆
-- `axon-dispatcher`: 任务执行后沉淀 `Episodic` 记忆
-- `axon-cli`: `axon memory init/list/forget/adjust` 管理命令 + `run --goal` 接入 HybridMemoryStore
-- **验收**: `cargo test --workspace` 通过；记忆分层存储、召回、调节、遗忘均可经 CLI 操作
+  - `ShortTermMemory`: 内存 LRU 短期记忆
+- `axon-brain`: `SimplePlanner` / `CommandAgent` 规划/生成前 `recall` 相关记忆;`LlmProfileExtractor` 自动提取画像
+- `axon-dispatcher`: 任务执行后沉淀 `Episodic` 记忆,成功后自动提取用户画像/语义记忆
+- `axon-cli`: `axon memory init/list/forget/adjust/decay/search` 管理命令 + `run --goal` 接入统一配置
+- **验收**: `cargo test --workspace` 通过；记忆分层存储、召回、调节、遗忘、衰减、搜索均可经 CLI 操作
 
 ### M3 — Firecracker 隔离 (Strong Isolation)
 - `axon-isolation`: `FirecrackerProvider` 实现
