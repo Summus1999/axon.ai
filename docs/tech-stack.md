@@ -511,7 +511,7 @@ pub struct FirecrackerProvider { /* 生产 */ }
 - `axon-cli`: `axon run --goal "..."` 跑通端到端
 - **验收**: `cargo test --workspace` 通过；CLI 下发任务 → 启 Docker 容器 → agent 执行 → 返回结果
 
-### M2 — 记忆系统 (Memory) ✅ 已交付
+### M2 — 记忆系统 (Memory) ○ 进行中
 - `axon-core`: ID 统一为 UUID v4
 - `axon-llm`: 新增 `EmbeddingProvider` trait + OpenAI 实现
 - `axon-memory`:

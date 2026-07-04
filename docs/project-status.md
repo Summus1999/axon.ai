@@ -15,8 +15,9 @@
 4. [Definition of Done](#4-definition-of-done)
 5. [当前进度快照 / Current Snapshot](#5-当前进度快照--current-snapshot)
 6. [M1 任务分解 / M1 Breakdown](#6-m1-任务分解--m1-breakdown)
-7. [风险与阻塞登记 / Risk & Blocker Log](#7-风险与阻塞登记--risk--blocker-log)
-8. [文档维护规则 / Maintenance Rules](#8-文档维护规则--maintenance-rules)
+7. [M2 任务分解 / M2 Breakdown](#7-m2-任务分解--m2-breakdown)
+8. [风险与阻塞登记 / Risk & Blocker Log](#8-风险与阻塞登记--risk--blocker-log)
+9. [文档维护规则 / Maintenance Rules](#9-文档维护规则--maintenance-rules)
 
 ---
 
@@ -210,7 +211,7 @@ M5  ×    0%  未做
 | **M1-T14** | 端到端集成测试(真实 DeepSeek API + Docker 隔离) | √ | `29ffc62` |
 | **M1-T15** | M1 验收 + 文档同步 + 用户 review | √ | `283b42e`/`1fca0db` |
 
-> 状态符号:`×` 未做 / `○` 当前进度点(全文档唯一)/ `√` 已完成。当前 `○` 落在 **M1-T15**。
+> 状态符号:`×` 未做 / `○` 当前进度点(全文档唯一)/ `√` 已完成。当前 `○` 落在 **M2-T1**。
 
 ### 6.2 建议执行顺序(依赖关系)
 
@@ -237,9 +238,51 @@ M1-T5(队列)──► M1-T6(调度)──► M1-T7/T8(Docker)──► M1-T9/T1
 
 ---
 
-## 7. 风险与阻塞登记 / Risk & Blocker Log
+## 7. M2 任务分解 / M2 Breakdown
 
-### 7.1 风险登记册(长期)
+> M2 目标:实现跨会话记忆沉淀与管理,让系统记住用户偏好与项目知识。
+> 任务 ID 对齐 [product-roadmap.md §4](./product-roadmap.md#4-需求拆解--requirements-breakdown)。
+
+### 7.1 任务看板
+
+| ID | 任务 | 状态 | 关联 |
+|----|------|------|------|
+| **M2-T1** | 文档对齐与基线建立 | ○ | — |
+| **M2-T2** | 配置与后端选择统一(`axon.toml`/`.env`/backend) | × | — |
+| **M2-T3** | GLM embedding provider | × | — |
+| **M2-T4** | 自动用户画像与语义记忆写入 | × | — |
+| **M2-T5** | 权重衰减与 LRU 短期记忆 | × | — |
+| **M2-T6** | 记忆管理 CLI 完善与跨会话集成测试 | × | — |
+| **M2-T7** | 文档同步、验收与用户 review | × | — |
+
+> 状态符号:`×` 未做 / `○` 当前进度点(全文档唯一)/ `√` 已完成。当前 `○` 落在 **M2-T1**。
+
+### 7.2 建议执行顺序(依赖关系)
+
+```
+M2-T1(文档对齐)──► M2-T2(配置统一)──► M2-T3(GLM embedding)
+                                           │
+                                           ▼
+              M2-T4(画像提取)◄───────── M2-T5(权重/LRU)
+                  │
+                  ▼
+              M2-T6(CLI 集成测试)──► M2-T7(验收)
+```
+
+### 7.3 M2 验收标准(端到端)
+
+- × 跨会话保留偏好(库选择、命名风格、测试约定)
+- × 新任务自动应用记忆
+- × `axon memory list/forget/adjust` 命令可用
+- × 偏好错误时可修正
+- × M2 全部门禁(fmt/clippy/test)通过
+- × 用户 review 通过
+
+---
+
+## 8. 风险与阻塞登记 / Risk & Blocker Log
+
+### 8.1 风险登记册(长期)
 
 | ID | 风险 | 影响 | 概率 | 缓解 | 状态 |
 |----|------|------|------|------|------|
@@ -251,7 +294,7 @@ M1-T5(队列)──► M1-T6(调度)──► M1-T7/T8(Docker)──► M1-T9/T1
 
 > 技术风险详情见 [tech-stack.md §5](./tech-stack.md#5-risk--mitigation--风险与缓解)。
 
-### 7.2 阻塞事项(当前)
+### 8.2 阻塞事项(当前)
 
 | 日期 | 任务 | 阻塞原因 | 需要的输入 | 状态 |
 |------|------|---------|-----------|------|
@@ -259,26 +302,26 @@ M1-T5(队列)──► M1-T6(调度)──► M1-T7/T8(Docker)──► M1-T9/T1
 
 ---
 
-## 8. 文档维护规则 / Maintenance Rules
+## 9. 文档维护规则 / Maintenance Rules
 
-### 8.1 谁更新 / When to Update
+### 9.1 谁更新 / When to Update
 
 | 事件 | 更新内容 | 责任 |
 |------|---------|------|
-| 任务状态变更 | §6 看板状态 + 关联 commit | AI agent(执行后立即) |
-| 遇阻塞 | §7.2 登记 + 任务标 Blocked | AI agent / 人类 |
+| 任务状态变更 | §6/§7 看板状态 + 关联 commit | AI agent(执行后立即) |
+| 遇阻塞 | §8.2 登记 + 任务标 Blocked | AI agent / 人类 |
 | 提交代码 | 关联 commit hash 到对应任务 | AI agent |
 | 里程碑完成 | §2 状态 + §5 快照 + §4.2 DoD 勾选 | AI agent(草拟)+ 人类(review) |
 | 新增/调整需求 | product-roadmap 对应表 + 本文档任务 | 评审后 |
 
-### 8.2 真实性要求
+### 9.2 真实性要求
 
 - 状态必须反映**实际**情况:未开始就是 Todo,不许虚标 In Progress 或 Done。
 - Done 必须有 commit + 测试通过证据,不许"我觉得写完了"就标 Done。
 - 阻塞必须如实登记,不许隐瞒。
 - 进度快照的百分比基于任务数,不含水分。
 
-### 8.3 与其他文档的关系
+### 9.3 与其他文档的关系
 
 ```
 product-roadmap.md  ──定义做什么──►  project-status.md(本文)
