@@ -1,16 +1,26 @@
 //! axon-llm — LLM Provider 抽象层 / LLM provider abstraction layer.
 //!
-//! 定义统一的 [`LlmProvider`] trait,屏蔽 OpenAI / Anthropic / Ollama 等
+//! 定义统一的 [`LlmProvider`] trait,屏蔽 OpenAI / DeepSeek 等
 //! 后端差异,支持按任务类型路由模型与流式输出。
 //!
-//! 具体实现(openai/anthropic/ollama)留待 M1。
+//! 具体实现(openai/deepseek)留待 M1。
 
-#![allow(dead_code)]
+pub mod deepseek;
+pub mod embedding;
+pub mod openai;
+pub mod router;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use axon_core::{Error, Result};
+
+pub use deepseek::DeepSeekProvider;
+pub use embedding::{
+    create_embedding_provider_from_env, EmbeddingProvider, OpenAiEmbeddingProvider,
+};
+pub use openai::OpenAiProvider;
+pub use router::{create_provider, create_provider_from_env};
 
 /// 消息角色 / message role.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -102,7 +112,7 @@ pub enum FinishReason {
 
 /// LLM Provider 抽象 / the unified LLM provider trait.
 ///
-/// 所有后端(OpenAI / Anthropic / Ollama ...)实现此 trait。
+/// 所有后端(OpenAI / DeepSeek 等)实现此 trait。
 /// 路由层(`LlmRouter`,M1)按 task type 选择具体 provider。
 #[async_trait]
 pub trait LlmProvider: Send + Sync {

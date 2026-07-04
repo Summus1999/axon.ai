@@ -34,7 +34,7 @@ fn default_profile() -> String {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct LlmConfig {
-    /// 默认 provider: `openai` | `anthropic` | `ollama`。
+    /// 默认 provider: `openai` | `deepseek`。
     pub default_provider: Option<String>,
     /// 默认模型名。
     pub default_model: Option<String>,

@@ -152,7 +152,7 @@
 | 子系统 | Crate | 职责 | 关键依赖 |
 |--------|-------|------|---------|
 | 共享类型/工具 | `axon-core` | 错误类型、配置、通用 trait | `thiserror`, `serde`, `tracing` |
-| LLM Provider 抽象 | `axon-llm` | 多 Provider trait 抽象(OpenAI/Anthropic/Ollama) | `reqwest`, `tiktoken-rs`, `async-trait` |
+| LLM Provider 抽象 | `axon-llm` | 多 Provider trait 抽象(OpenAI/DeepSeek) | `reqwest`, `tiktoken-rs`, `async-trait` |
 | 记忆大脑 | `axon-memory` | 短期/长期记忆、用户画像、记忆管理 | `qdrant-client`, `redb`/`sled` |
 | AI 调度大脑 | `axon-brain` | LLM 编排、任务规划、ReAct/Planner 循环 | `axon-llm`, `axon-memory`, `async-trait` |
 | 任务分发中心 | `axon-dispatcher` | 任务队列(DAG)、调度、VM 生命周期管理 | `tokio`, `tonic` |
@@ -240,7 +240,7 @@ pub trait LlmProvider: Send + Sync {
     fn capabilities(&self) -> Capabilities; // 函数调用? 视觉? 上下文长度?
 }
 
-// 占位实现:OpenAiProvider / AnthropicProvider / OllamaProvider
+// 占位实现:OpenAiProvider / DeepSeekProvider
 ```
 
 **理由**:
@@ -256,7 +256,7 @@ pub trait LlmProvider: Send + Sync {
 | `async-openai` | OpenAI 协议成熟 | 锁定单一协议 | 不符合多 Provider 目标 |
 | 纯 OpenAI 兼容协议 | 一个 client 通吃 | 无法用 Anthropic 原生工具调用等特性 | 不符合目标 |
 
-**路由策略**: 按 task type 路由(规划→强模型,执行→小模型),支持本地 Ollama fallback 降成本。
+**路由策略**: 按 task type 路由(规划→强模型,执行→便宜模型),支持切换低成本 API key 降本。
 
 ---
 
@@ -462,7 +462,7 @@ pub struct FirecrackerProvider { /* 生产 */ }
 
 **缓解**:
 - `LlmProvider` 路由层支持按任务类型选模型(规划用强模型,执行用便宜模型)
-- 本地 Ollama 作为 fallback,降低成本
+- 选择低成本模型/Provider 作为 fallback,降低成本
 - 请求级缓存(相同 prompt 命中)
 - 令牌桶限速 + 指数退避重试
 
@@ -501,18 +501,27 @@ pub struct FirecrackerProvider { /* 生产 */ }
 - `.gitignore`、CI 占位、本文档
 - **验收**: `cargo build --workspace` 通过
 
-### M1 — 单机 CLI 跑通 (Single-Node MVP)
-- `axon-llm`: OpenAI/Ollama provider 实现
-- `axon-brain`: 单轮 Planner(无 ReAct)
-- `axon-cli`: `axon run "任务描述"` 基本可用
-- `axon-isolation`: DockerProvider 可启容器执行命令
-- **验收**: CLI 下发任务 → 启 Docker 容器 → agent 执行 → 返回结果
+### M1 — 单机 CLI 跑通 (Single-Node MVP) ✅ 已交付
+- `axon-llm`: `OpenAiProvider` / `DeepSeekProvider` 实现 + `create_provider_from_env` 路由
+- `axon-brain`: `SimplePlanner`(单任务) + `CommandAgent`(LLM 生成 shell 命令)
+- `axon-memory`: `InMemoryStore` 占位实现
+- `axon-dispatcher`: `InProcessQueue` + `SimpleScheduler`(串行调度,收集执行结果)
+- `axon-isolation`: `DockerProvider` 基于系统 `docker` CLI
+- `axon-worker`: `run_task` 接入 `Agent`
+- `axon-cli`: `axon run --goal "..."` 跑通端到端
+- **验收**: `cargo test --workspace` 通过；CLI 下发任务 → 启 Docker 容器 → agent 执行 → 返回结果
 
-### M2 — 记忆系统 (Memory)
-- `axon-memory`: Qdrant 向量 + redb KV 实现
-- 短期/长期/用户画像分层
-- `axon-cli`: `axon memory list/forget/adjust` 管理命令
-- **验收**: 跨会话记住用户偏好,可人工调节
+### M2 — 记忆系统 (Memory) ✅ 已交付
+- `axon-core`: ID 统一为 UUID v4
+- `axon-llm`: 新增 `EmbeddingProvider` trait + OpenAI 实现
+- `axon-memory`:
+  - `RedbStore`: 语义/用户画像/短期记忆的本地 KV 实现
+  - `QdrantStore`: 情景记忆的向量存储与召回
+  - `HybridMemoryStore`: 按 `MemoryKind` 路由的统一 `MemoryStore`
+- `axon-brain`: `SimplePlanner` / `CommandAgent` 规划/生成前 `recall` 相关记忆
+- `axon-dispatcher`: 任务执行后沉淀 `Episodic` 记忆
+- `axon-cli`: `axon memory init/list/forget/adjust` 管理命令 + `run --goal` 接入 HybridMemoryStore
+- **验收**: `cargo test --workspace` 通过；记忆分层存储、召回、调节、遗忘均可经 CLI 操作
 
 ### M3 — Firecracker 隔离 (Strong Isolation)
 - `axon-isolation`: `FirecrackerProvider` 实现

@@ -283,7 +283,7 @@
 - **用户价值**:开发者可用 CLI 提交单步开发任务,在 Docker 隔离中执行并自检
 - **关键 Stories**:US-001、US-002、US-003、US-006
 - **验收**:端到端跑通 `axon run` → Docker 执行 → 自检 → 回报
-- **依赖**:OpenAI/Ollama API key、本地 Docker
+- **依赖**:OpenAI/DeepSeek API key、本地 Docker
 
 ### v0.3 — M2 记忆系统
 - **用户价值**:系统跨会话记住用户偏好与项目知识,可管理
