@@ -23,6 +23,7 @@ axon.toml
 config.local.toml
 
 # ── 数据目录 / local data ─────────────────────────────
+/.axon
 /data
 /var
 *.qdrant

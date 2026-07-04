@@ -56,8 +56,10 @@ impl CommandAgent {
     /// 3. 运行 `cargo test`
     fn build_rust_command(code: &str) -> String {
         let encoded = base64::engine::general_purpose::STANDARD.encode(code);
+        // 手动创建独立 workspace,避免 `cargo new` 把项目当作父 workspace 成员
+        // 从而触发对 crates.io 的网络访问。
         format!(
-            "cd /workspace && cargo new --lib axon_task && cd axon_task && echo {encoded} | base64 -d > src/lib.rs && cargo test"
+            "cd /workspace && mkdir -p axon_task/src && cd axon_task && printf '%s\\n' '[package]' 'name = \"axon_task\"' 'version = \"0.1.0\"' 'edition = \"2021\"' '' '[workspace]' '' > Cargo.toml && echo {encoded} | base64 -d > src/lib.rs && cargo test"
         )
     }
 }
@@ -246,7 +248,9 @@ mod tests {
 
         assert!(output
             .summary
-            .starts_with("cd /workspace && cargo new --lib"));
+            .starts_with("cd /workspace && mkdir -p axon_task/src"));
+        assert!(output.summary.contains("[package]"));
+        assert!(output.summary.contains("[workspace]"));
         assert!(output.summary.contains("base64 -d > src/lib.rs"));
         assert!(output.summary.contains("cargo test"));
     }

@@ -7,6 +7,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
 use axon_brain::Agent;
@@ -19,7 +20,7 @@ use axon_proto::{Task, TaskState};
 use crate::{Scheduler, SchedulerConfig, TaskQueue};
 
 /// 单个任务的执行结果 / execution result for one task.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskResult {
     /// 任务 ID / task id.
     pub task_id: TaskId,

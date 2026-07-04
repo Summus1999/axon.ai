@@ -3,6 +3,7 @@
 //! 把 CLI 的端到端流程暴露为可测试的库函数，便于集成测试调用。
 //! 生产入口仍由 `src/main.rs` 的 `axon` 二进制提供。
 
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -10,17 +11,18 @@ use axon_brain::{CommandAgent, Goal, Planner, SimplePlanner};
 use axon_dispatcher::{InProcessQueue, Scheduler, SchedulerConfig, SimpleScheduler, TaskResult};
 use axon_isolation::{DockerProvider, VmSpec};
 use axon_memory::{HybridMemoryStore, InMemoryStore, MemoryStore, QdrantStore, RedbStore};
+use serde::{Deserialize, Serialize};
 
 /// 创建记忆存储 / create a memory store from environment config.
 ///
 /// 通过 `AXON_MEMORY_BACKEND` 选择后端:
-/// - `memory`: 进程内 `InMemoryStore`,不依赖外部服务,适合测试
-/// - `hybrid`(默认): `HybridMemoryStore` = `RedbStore` + `QdrantStore`
+/// - `memory`(默认): 进程内 `InMemoryStore`,不依赖外部服务,适合 M1
+/// - `hybrid`: `HybridMemoryStore` = `RedbStore` + `QdrantStore`(需要 OpenAI embedding)
 pub async fn create_memory_store() -> anyhow::Result<Arc<dyn MemoryStore>> {
-    let backend = std::env::var("AXON_MEMORY_BACKEND").unwrap_or_else(|_| "hybrid".into());
+    let backend = std::env::var("AXON_MEMORY_BACKEND").unwrap_or_else(|_| "memory".into());
     match backend.as_str() {
-        "memory" => Ok(Arc::new(InMemoryStore::new())),
-        _ => create_hybrid_memory_store().await,
+        "hybrid" => create_hybrid_memory_store().await,
+        _ => Ok(Arc::new(InMemoryStore::new())),
     }
 }
 
@@ -113,7 +115,88 @@ pub async fn run_goal(
         .await
         .map_err(|e| anyhow::anyhow!("scheduler failed: {e}"))?;
 
-    Ok(scheduler.results().await)
+    let results = scheduler.results().await;
+    save_task_records(&results)?;
+
+    Ok(results)
+}
+
+/// 任务状态记录 / persisted task status record.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskRecord {
+    /// 任务 ID / task id.
+    pub task_id: String,
+    /// 任务状态 / task status.
+    pub status: String,
+    /// 容器退出码 / container exit code.
+    pub exit_code: i32,
+    /// 标准输出摘要 / stdout summary.
+    pub stdout: String,
+    /// 标准错误摘要 / stderr summary.
+    pub stderr: String,
+    /// 完成时间 / finished at.
+    pub finished_at: String,
+}
+
+impl TaskRecord {
+    /// 从 `TaskResult` 创建记录 / create a record from a task result.
+    fn from_result(result: &TaskResult) -> Self {
+        let status = if result.exit_code == 0 {
+            "completed".into()
+        } else {
+            "failed".into()
+        };
+        Self {
+            task_id: result.task_id.clone(),
+            status,
+            exit_code: result.exit_code,
+            stdout: result.stdout.trim().into(),
+            stderr: result.stderr.trim().into(),
+            finished_at: now_rfc3339(),
+        }
+    }
+}
+
+/// 任务记录默认存储路径 / default task records path.
+pub fn task_records_path() -> PathBuf {
+    PathBuf::from(".axon/tasks.json")
+}
+
+/// 保存任务记录到本地文件 / persist task records to local file.
+///
+/// 文件保存在 `.axon/tasks.json`,便于 `axon tasks` 查看历史状态。
+pub fn save_task_records(results: &[TaskResult]) -> anyhow::Result<()> {
+    let path = task_records_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let records: Vec<TaskRecord> = results.iter().map(TaskRecord::from_result).collect();
+    let json = serde_json::to_string_pretty(&records)?;
+    fs::write(&path, json)?;
+    Ok(())
+}
+
+/// 从本地文件加载任务记录 / load task records from local file.
+///
+/// 若文件不存在则返回空列表。
+pub fn list_tasks() -> anyhow::Result<Vec<TaskRecord>> {
+    let path = task_records_path();
+    if !path.is_file() {
+        return Ok(vec![]);
+    }
+
+    let content = fs::read_to_string(&path)?;
+    let records: Vec<TaskRecord> = serde_json::from_str(&content)?;
+    Ok(records)
+}
+
+fn now_rfc3339() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs().to_string())
+        .unwrap_or_else(|_| "0".into())
 }
 
 #[cfg(test)]
@@ -122,17 +205,56 @@ mod tests {
 
     use super::*;
 
-    /// 串行化会修改环境变量的测试。
+    /// 串行化会修改环境变量/工作目录的测试。
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
-    /// 当 `AXON_MEMORY_BACKEND=memory` 时,`create_memory_store` 不依赖外部服务即可创建。
+    /// 验证任务记录可以保存并重新加载。
+    #[test]
+    fn save_and_load_task_records_roundtrip() {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let original = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&tmp).unwrap();
+
+        let results = vec![TaskResult {
+            task_id: "t1".into(),
+            exit_code: 0,
+            stdout: "hello".into(),
+            stderr: "".into(),
+        }];
+        save_task_records(&results).unwrap();
+
+        let records = list_tasks().unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].task_id, "t1");
+        assert_eq!(records[0].status, "completed");
+        assert_eq!(records[0].exit_code, 0);
+
+        std::env::set_current_dir(original).unwrap();
+    }
+
+    /// 当任务记录文件不存在时,`list_tasks` 返回空列表。
+    #[test]
+    fn list_tasks_returns_empty_when_missing() {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let original = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&tmp).unwrap();
+
+        let records = list_tasks().unwrap();
+        assert!(records.is_empty());
+
+        std::env::set_current_dir(original).unwrap();
+    }
+
+    /// 默认情况下 `create_memory_store` 创建 InMemoryStore,不依赖外部服务。
     #[tokio::test]
-    async fn memory_backend_creates_in_memory_store() {
+    async fn default_backend_creates_in_memory_store() {
         let old;
         {
             let _lock = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
             old = std::env::var("AXON_MEMORY_BACKEND").ok();
-            std::env::set_var("AXON_MEMORY_BACKEND", "memory");
+            std::env::remove_var("AXON_MEMORY_BACKEND");
         }
 
         let store = create_memory_store().await.unwrap();

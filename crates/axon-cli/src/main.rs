@@ -84,7 +84,24 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         Commands::Tasks => {
-            println!("(M1:任务列表留待后续实现，当前调度器为进程内队列)");
+            let records = axon_cli::list_tasks()?;
+            if records.is_empty() {
+                println!("暂无任务记录，先运行 `axon run --goal ...`");
+            } else {
+                println!("共 {} 条任务记录:", records.len());
+                for r in records {
+                    println!(
+                        "  - [{}] {} | status={} | exit_code={} | finished_at={}",
+                        r.task_id, r.task_id, r.status, r.exit_code, r.finished_at
+                    );
+                    if !r.stdout.is_empty() {
+                        println!("    stdout: {}", r.stdout.lines().next().unwrap_or(""));
+                    }
+                    if !r.stderr.is_empty() {
+                        println!("    stderr: {}", r.stderr.lines().next().unwrap_or(""));
+                    }
+                }
+            }
         }
         Commands::Memory { action } => handle_memory(action).await?,
         Commands::Vms => {
