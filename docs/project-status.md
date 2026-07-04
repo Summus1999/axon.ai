@@ -157,7 +157,7 @@
 
 ```
 M0  √  100%  已完成
-M1  ○    0%  当前进度点  ← 下一步开发从此开始
+M1  ○    7%  当前进度点  ← M1-T1 已完成，M1-T2 进行中
 M2  ×    0%  未做
 M3  ×    0%  未做
 M4  ×    0%  未做
@@ -194,8 +194,8 @@ M5  ×    0%  未做
 
 | ID | 任务 | 状态 | 关联 |
 |----|------|------|------|
-| **M1-T1** | LLM Provider 抽象实现:OpenAI provider(S1.3.1/S1.3.2) | ○ | — |
-| **M1-T2** | LLM Provider 抽象实现:Ollama provider(S1.3.1) | × | — |
+| **M1-T1** | LLM Provider 抽象实现:OpenAI provider(S1.3.1/S1.3.2) | √ | 待提交：修复 reasoning_content + DeepSeek 冒烟测试 |
+| **M1-T2** | LLM Provider 抽象实现:Ollama provider(S1.3.1) | ○ | — |
 | **M1-T3** | LlmRouter:按配置路由 provider(S1.3.1) | × | — |
 | **M1-T4** | Brain:单步 Planner(Goal → 单 Task)(S1.1.1/S1.2.1) | × | — |
 | **M1-T5** | Dispatcher:进程内优先级队列(S3.1.1) | × | — |
