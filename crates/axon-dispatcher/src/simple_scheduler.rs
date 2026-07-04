@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
-use axon_brain::Agent;
+use axon_brain::{Agent, ProfileExtractor};
 use axon_core::{Result, TaskId};
 use axon_isolation::{Command as VmCommand, IsolationProvider, VmSpec};
 use axon_llm::LlmProvider;
@@ -43,6 +43,7 @@ pub struct SimpleScheduler<I, A> {
     agent: Arc<A>,
     llm: Arc<dyn LlmProvider>,
     memory: Arc<dyn MemoryStore>,
+    profile_extractor: Option<Arc<dyn ProfileExtractor>>,
     config: SchedulerConfig,
     vm_spec: VmSpec,
     results: Arc<Mutex<Vec<TaskResult>>>,
@@ -56,12 +57,15 @@ where
     /// 创建调度器 / create a scheduler.
     ///
     /// `vm_spec` 作为每个任务启动容器/VM 的模板规格。
+    /// `profile_extractor` 为可选的画像提取器,任务成功时自动沉淀用户画像。
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         queue: Arc<crate::InProcessQueue>,
         isolation: Arc<I>,
         agent: Arc<A>,
         llm: Arc<dyn LlmProvider>,
         memory: Arc<dyn MemoryStore>,
+        profile_extractor: Option<Arc<dyn ProfileExtractor>>,
         config: SchedulerConfig,
         vm_spec: VmSpec,
     ) -> Self {
@@ -71,6 +75,7 @@ where
             agent,
             llm,
             memory,
+            profile_extractor,
             config,
             vm_spec,
             results: Arc::new(Mutex::new(vec![])),
@@ -158,6 +163,31 @@ where
         };
         if let Err(e) = self.memory.store(mem).await {
             tracing::warn!(error = %e, "failed to store episodic memory");
+        }
+
+        // 任务成功时,自动提取并沉淀用户画像/语义记忆。
+        if matches!(state, TaskState::Completed) {
+            if let Some(extractor) = self.profile_extractor.as_ref() {
+                let goal = axon_brain::Goal {
+                    description: task.description.clone(),
+                    context: vec![],
+                };
+                match extractor
+                    .extract(&goal, &task, &agent_output, &*self.llm)
+                    .await
+                {
+                    Ok(memories) => {
+                        for mem in memories {
+                            if let Err(e) = self.memory.store(mem).await {
+                                tracing::warn!(error = %e, "failed to store extracted memory");
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "profile extraction failed");
+                    }
+                }
+            }
         }
 
         exec_result.map(|_| ())
@@ -357,6 +387,7 @@ mod tests {
             Arc::new(MockAgent),
             Arc::new(DummyLlm),
             Arc::new(DummyMemory),
+            None,
             SchedulerConfig::default(),
             VmSpec {
                 vcpus: 1,
@@ -376,5 +407,98 @@ mod tests {
         scheduler.run().await.unwrap();
 
         assert!(isolation.created.load(Ordering::SeqCst));
+    }
+
+    /// 验证任务成功后,画像提取器会被调用并写入记忆。
+    #[tokio::test]
+    async fn scheduler_stores_extracted_memories_on_success() {
+        use std::sync::atomic::AtomicUsize;
+
+        struct CountingMemory {
+            store_count: AtomicUsize,
+        }
+
+        #[async_trait]
+        impl MemoryStore for CountingMemory {
+            async fn store(&self, _mem: Memory) -> Result<MemoryId> {
+                self.store_count.fetch_add(1, Ordering::SeqCst);
+                Ok("m1".into())
+            }
+            async fn recall(&self, _query: &RecallQuery) -> Result<Vec<Memory>> {
+                Ok(vec![])
+            }
+            async fn list(&self, _filter: &MemoryFilter) -> Result<Vec<Memory>> {
+                Ok(vec![])
+            }
+            async fn get(&self, _id: &MemoryId) -> Result<Option<Memory>> {
+                Ok(None)
+            }
+            async fn adjust_weight(&self, _id: &MemoryId, _weight: f32) -> Result<()> {
+                Ok(())
+            }
+            async fn forget(&self, _id: &MemoryId) -> Result<()> {
+                Ok(())
+            }
+        }
+
+        struct MockExtractor;
+
+        #[async_trait]
+        impl ProfileExtractor for MockExtractor {
+            async fn extract(
+                &self,
+                _goal: &axon_brain::Goal,
+                _task: &Task,
+                _output: &axon_brain::AgentOutput,
+                _llm: &dyn LlmProvider,
+            ) -> Result<Vec<Memory>> {
+                Ok(vec![Memory {
+                    id: String::new(),
+                    kind: MemoryKind::UserProfile,
+                    content: "prefers anyhow".into(),
+                    embedding: None,
+                    weight: 1.0,
+                    created_at: 0,
+                    updated_at: 0,
+                    source: None,
+                }])
+            }
+        }
+
+        let queue = Arc::new(crate::InProcessQueue::new());
+        let isolation = Arc::new(MockIsolation {
+            created: AtomicBool::new(false),
+            exec_success: AtomicBool::new(true),
+        });
+        let memory = Arc::new(CountingMemory {
+            store_count: AtomicUsize::new(0),
+        });
+        let scheduler = SimpleScheduler::new(
+            queue,
+            isolation,
+            Arc::new(MockAgent),
+            Arc::new(DummyLlm),
+            memory.clone(),
+            Some(Arc::new(MockExtractor)),
+            SchedulerConfig::default(),
+            VmSpec {
+                vcpus: 1,
+                mem_mb: 256,
+                rootfs: "alpine:latest".into(),
+                kernel: None,
+                workspace: None,
+                env: vec![],
+                network: false,
+            },
+        );
+
+        scheduler
+            .submit(vec![sample_task("t1")], vec![])
+            .await
+            .unwrap();
+        scheduler.run().await.unwrap();
+
+        // Episodic 1 条 + 提取出的 1 条 = 2 条。
+        assert_eq!(memory.store_count.load(Ordering::SeqCst), 2);
     }
 }

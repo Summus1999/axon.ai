@@ -8,6 +8,7 @@
 //! 具体实现(ReAct 多步、工具调用)留待 M1/M5。
 
 pub mod command_agent;
+pub mod profile_extractor;
 pub mod simple_planner;
 
 use async_trait::async_trait;
@@ -18,6 +19,7 @@ use axon_memory::MemoryStore;
 use axon_proto::Task;
 
 pub use command_agent::CommandAgent;
+pub use profile_extractor::{LlmProfileExtractor, ProfileExtractor};
 pub use simple_planner::SimplePlanner;
 
 /// 用户下达的高层目标 / a high-level goal from the user.

@@ -98,6 +98,7 @@ pub async fn run_goal(
         agent,
         llm,
         memory,
+        Some(Arc::new(axon_brain::LlmProfileExtractor::new())),
         SchedulerConfig {
             max_concurrency: 1,
             task_timeout_secs: 600,
