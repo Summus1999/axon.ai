@@ -1,0 +1,47 @@
+# ── Rust ──────────────────────────────────────────────
+/target
+**/target
+# Cargo.lock: 库可忽略,二进制/工作区建议提交。axon 是应用,保留锁文件。
+# 如确需忽略某 crate 的锁,在此单独处理。
+
+# ── 构建产物 / build artifacts ────────────────────────
+*.pdb
+*.exe
+*.dll
+*.so
+*.dylib
+
+# ── 环境 & 密钥 / env & secrets ───────────────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ── 配置覆盖 / local config overrides ─────────────────
+axon.toml
+config.local.toml
+
+# ── 数据目录 / local data ─────────────────────────────
+/data
+/var
+*.qdrant
+*.redb
+
+# ── Firecracker / VM 镜像 ─────────────────────────────
+*.ext4
+*.vmlinux
+fc-*
+
+# ── IDE / 编辑器 ──────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ── 日志 / logs ───────────────────────────────────────
+*.log
+logs/

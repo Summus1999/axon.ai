@@ -1,0 +1,17 @@
+[package]
+name = "axon-dispatcher"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "axon.ai 任务分发中心 / task dispatcher: 队列、调度与 VM 生命周期"
+
+[dependencies]
+axon-core.workspace = true
+axon-proto.workspace = true
+axon-isolation.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true

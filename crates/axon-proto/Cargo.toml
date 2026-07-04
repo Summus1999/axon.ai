@@ -1,0 +1,13 @@
+[package]
+name = "axon-proto"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "axon.ai 内部消息 schema / internal message & RPC schema"
+
+[dependencies]
+axon-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true

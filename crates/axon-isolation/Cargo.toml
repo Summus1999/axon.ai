@@ -1,0 +1,15 @@
+[package]
+name = "axon-isolation"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "axon.ai 隔离执行环境 / isolated execution: Firecracker microVM + Docker"
+
+[dependencies]
+axon-core.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true

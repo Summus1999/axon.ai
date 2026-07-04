@@ -1,0 +1,15 @@
+[package]
+name = "axon-dashboard"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "axon.ai Web 仪表盘后端 / Web dashboard backend (axum)"
+
+[dependencies]
+axon-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true

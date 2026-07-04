@@ -1,0 +1,18 @@
+[package]
+name = "axon-brain"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "axon.ai AI 调度大脑 / scheduling brain: LLM 编排与任务规划"
+
+[dependencies]
+axon-core.workspace = true
+axon-llm.workspace = true
+axon-memory.workspace = true
+axon-proto.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true

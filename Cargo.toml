@@ -1,0 +1,71 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/axon-core",
+    "crates/axon-llm",
+    "crates/axon-memory",
+    "crates/axon-brain",
+    "crates/axon-dispatcher",
+    "crates/axon-isolation",
+    "crates/axon-worker",
+    "crates/axon-proto",
+    "crates/axon-cli",
+    "crates/axon-dashboard",
+]
+
+# ── Workspace metadata ────────────────────────────────────────────────
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "MIT"
+repository = "https://github.com/Summus/axon.ai"
+authors = ["axon.ai contributors"]
+
+# ── 集中管理的依赖版本 / Centralized dependency versions ──────────────
+# 子 crate 通过 `dep = { workspace = true }` 引用,便于统一升级。
+# 仅声明骨架阶段实际使用的依赖;后续 milestone 按需追加(qdrant-client、
+# firec-rs、async-nats、tonic 等)。
+[workspace.dependencies]
+# 异步运行时 / async runtime
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync"] }
+
+# 序列化 / serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# 错误处理 / error handling
+thiserror = "1"
+anyhow = "1"
+
+# 异步 trait / async trait
+async-trait = "0.1"
+
+# 日志追踪 / tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# 配置 / config
+figment = { version = "0.10", features = ["toml", "env"] }
+toml = "0.8"
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Web 框架 / web framework
+axum = "0.7"
+
+# 内部 crate / internal crates (path + version, 供成员统一引用)
+axon-core = { version = "0.1.0", path = "crates/axon-core" }
+axon-llm = { version = "0.1.0", path = "crates/axon-llm" }
+axon-memory = { version = "0.1.0", path = "crates/axon-memory" }
+axon-brain = { version = "0.1.0", path = "crates/axon-brain" }
+axon-dispatcher = { version = "0.1.0", path = "crates/axon-dispatcher" }
+axon-isolation = { version = "0.1.0", path = "crates/axon-isolation" }
+axon-worker = { version = "0.1.0", path = "crates/axon-worker" }
+axon-proto = { version = "0.1.0", path = "crates/axon-proto" }
+
+# ── 全局 profile 优化 ─────────────────────────────────────────────────
+[profile.release]
+lto = "thin"
+codegen-units = 1
