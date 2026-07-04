@@ -64,7 +64,9 @@ impl MemoryStore for RedbStore {
         if mem.created_at == 0 {
             mem.created_at = now;
         }
-        mem.updated_at = now;
+        if mem.updated_at == 0 {
+            mem.updated_at = now;
+        }
 
         let table = Self::table_for_kind(mem.kind);
         let json = serde_json::to_string(&mem).map_err(axon_core::Error::Json)?;
@@ -172,7 +174,29 @@ impl MemoryStore for RedbStore {
         }
         Err(axon_core::Error::NotFound(format!("memory {id}")))
     }
+
+    async fn decay_weights(&self, half_life_days: f32) -> Result<()> {
+        if half_life_days <= 0.0 {
+            return Ok(());
+        }
+
+        let now = now_ms();
+        let all = self.list(&MemoryFilter::default()).await?;
+        for mut mem in all {
+            let elapsed_days = (now.saturating_sub(mem.updated_at)) as f32 / MS_PER_DAY;
+            let factor = 0.5_f32.powf(elapsed_days / half_life_days);
+            let new_weight = mem.weight * factor;
+            if (new_weight - mem.weight).abs() > f32::EPSILON {
+                mem.weight = new_weight;
+                mem.updated_at = now;
+                self.store(mem).await?;
+            }
+        }
+        Ok(())
+    }
 }
+
+const MS_PER_DAY: f32 = 24.0 * 60.0 * 60.0 * 1_000.0;
 
 fn redb_error<E: std::fmt::Display>(e: E) -> axon_core::Error {
     axon_core::Error::Memory(format!("redb error: {e}"))
@@ -269,5 +293,21 @@ mod tests {
 
         store.forget(&id).await.unwrap();
         assert!(store.get(&id).await.unwrap().is_none());
+    }
+
+    /// 验证权重衰减按半衰期降低旧记忆权重。
+    #[tokio::test]
+    async fn decay_weights_reduces_old_memories() {
+        let store = temp_db();
+        let mut mem = sample_memory("old preference", MemoryKind::UserProfile);
+        mem.weight = 1.0;
+        // 将更新时间设为一天前,半衰期 1 天,权重应衰减为 0.5。
+        mem.updated_at = now_ms() - (24 * 60 * 60 * 1_000);
+        let id = store.store(mem).await.unwrap();
+
+        store.decay_weights(1.0).await.unwrap();
+
+        let decayed = store.get(&id).await.unwrap().unwrap();
+        assert!((decayed.weight - 0.5).abs() < 0.01);
     }
 }

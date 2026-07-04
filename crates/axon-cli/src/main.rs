@@ -59,6 +59,12 @@ enum MemoryAction {
     Forget { id: String },
     /// 调节权重 / adjust a memory's weight.
     Adjust { id: String, weight: f32 },
+    /// 按半衰期衰减记忆权重 / decay memory weights by half-life days.
+    Decay {
+        /// 半衰期天数,默认 30 / half-life in days.
+        #[arg(long, default_value_t = 30.0)]
+        half_life_days: f32,
+    },
 }
 
 #[tokio::main]
@@ -152,6 +158,10 @@ async fn handle_memory(action: MemoryAction) -> anyhow::Result<()> {
             store.adjust_weight(&id, weight).await?;
             println!("✓ 已调节记忆 {} 权重为 {:.2}", id, weight);
         }
+        MemoryAction::Decay { half_life_days } => {
+            store.decay_weights(half_life_days).await?;
+            println!("✓ 已按半衰期 {:.1} 天衰减记忆权重", half_life_days);
+        }
     }
     Ok(())
 }
@@ -188,5 +198,17 @@ mod tests {
     fn parse_kind_works() {
         assert_eq!(parse_memory_kind("semantic"), Some(MemoryKind::Semantic));
         assert_eq!(parse_memory_kind("unknown"), None);
+    }
+
+    /// 验证 `memory decay` 默认半衰期为 30 天。
+    #[test]
+    fn cli_parses_decay_command() {
+        let cli = Cli::parse_from(["axon", "memory", "decay"]);
+        match cli.command {
+            Commands::Memory {
+                action: MemoryAction::Decay { half_life_days },
+            } => assert!((half_life_days - 30.0).abs() < f32::EPSILON),
+            _ => panic!("expected Decay command"),
+        }
     }
 }

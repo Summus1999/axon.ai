@@ -103,6 +103,12 @@ where
         let _ = self.episodic.forget(id).await;
         Ok(())
     }
+
+    async fn decay_weights(&self, half_life_days: f32) -> Result<()> {
+        self.semantic.decay_weights(half_life_days).await?;
+        self.episodic.decay_weights(half_life_days).await?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -177,5 +183,16 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(hits.len(), 2);
+    }
+
+    /// 验证 decay_weights 能同时下发到两个子存储。
+    #[tokio::test]
+    async fn decay_weights_delegates_to_both() {
+        let semantic = InMemoryStore::new();
+        let episodic = InMemoryStore::new();
+        let hybrid = HybridMemoryStore::new(semantic, episodic);
+
+        // 默认 InMemoryStore 的 decay_weights 为空实现,本测试仅验证不报错。
+        hybrid.decay_weights(30.0).await.unwrap();
     }
 }

@@ -12,6 +12,7 @@ pub mod hybrid;
 pub mod in_memory;
 pub mod qdrant_store;
 pub mod redb_store;
+pub mod short_term;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -98,6 +99,13 @@ pub trait MemoryStore: Send + Sync {
 
     /// 遗忘 / forget (delete) a memory.
     async fn forget(&self, id: &MemoryId) -> Result<()>;
+
+    /// 按半衰期衰减所有记忆的权重 / decay memory weights by half-life days.
+    ///
+    /// 默认空实现;需要持久化的存储(如 `RedbStore`)可覆盖。
+    async fn decay_weights(&self, _half_life_days: f32) -> Result<()> {
+        Ok(())
+    }
 }
 
 /// 内置默认权重 / default weight for a new memory.
