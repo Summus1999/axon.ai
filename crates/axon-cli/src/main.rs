@@ -65,6 +65,14 @@ enum MemoryAction {
         #[arg(long, default_value_t = 30.0)]
         half_life_days: f32,
     },
+    /// 语义搜索记忆 / semantic search memories.
+    Search {
+        /// 查询文本 / query text.
+        query: String,
+        /// 返回 Top-K 结果,默认 5 / top-k results.
+        #[arg(short, long, default_value_t = 5)]
+        top_k: usize,
+    },
 }
 
 #[tokio::main]
@@ -162,6 +170,22 @@ async fn handle_memory(action: MemoryAction) -> anyhow::Result<()> {
             store.decay_weights(half_life_days).await?;
             println!("✓ 已按半衰期 {:.1} 天衰减记忆权重", half_life_days);
         }
+        MemoryAction::Search { query, top_k } => {
+            let memories = store
+                .recall(&axon_memory::RecallQuery {
+                    query,
+                    kind: None,
+                    top_k,
+                })
+                .await?;
+            println!("共召回 {} 条记忆:", memories.len());
+            for m in memories {
+                println!(
+                    "  [{}] {} | kind={:?} | weight={:.2}",
+                    m.id, m.content, m.kind, m.weight
+                );
+            }
+        }
     }
     Ok(())
 }
@@ -209,6 +233,21 @@ mod tests {
                 action: MemoryAction::Decay { half_life_days },
             } => assert!((half_life_days - 30.0).abs() < f32::EPSILON),
             _ => panic!("expected Decay command"),
+        }
+    }
+
+    /// 验证 `memory search` 解析 query 与 top_k。
+    #[test]
+    fn cli_parses_search_command() {
+        let cli = Cli::parse_from(["axon", "memory", "search", "rust", "--top-k", "3"]);
+        match cli.command {
+            Commands::Memory {
+                action: MemoryAction::Search { query, top_k },
+            } => {
+                assert_eq!(query, "rust");
+                assert_eq!(top_k, 3);
+            }
+            _ => panic!("expected Search command"),
         }
     }
 }
