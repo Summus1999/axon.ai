@@ -15,7 +15,7 @@ use axon_isolation::VmHandle;
 use axon_proto::{Task, TaskState};
 
 pub use in_process_queue::InProcessQueue;
-pub use simple_scheduler::SimpleScheduler;
+pub use simple_scheduler::{SimpleScheduler, TaskResult};
 
 /// 任务队列抽象 / the task queue trait.
 #[async_trait]

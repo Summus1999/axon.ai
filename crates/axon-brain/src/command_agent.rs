@@ -1,9 +1,11 @@
 //! 命令生成 Agent / command-generating agent.
 //!
-//! M1 实现：根据任务描述让 LLM 生成一个 shell 命令，
-//! 由调度器在 Docker 容器内执行。不实现 ReAct 多步循环（M5）。
+//! M1 实现：根据任务描述让 LLM 生成 Rust 代码，
+//! 然后自动包装成在 Docker 容器内执行的 shell 命令。
+//! 不实现 ReAct 多步循环（M5）。
 
 use async_trait::async_trait;
+use base64::Engine;
 
 use axon_core::Result;
 use axon_llm::{CompletionRequest, LlmProvider, Message, Role};
@@ -22,20 +24,41 @@ impl CommandAgent {
         Self
     }
 
-    /// 清洗 LLM 输出：去掉首尾空白与 Markdown 代码块标记。
-    fn clean_command(raw: &str) -> String {
+    /// 从 LLM 输出中提取 JSON 对象 / extract the JSON object from LLM output.
+    ///
+    /// LLM 可能用 markdown 代码块包裹 JSON,本函数先尝试提取 ```json 块,
+    /// 再尝试直接解析整个输出。
+    fn extract_code_json(raw: &str) -> Option<serde_json::Value> {
         let trimmed = raw.trim();
-        let without_fences = trimmed
-            .strip_prefix("```bash")
-            .or_else(|| trimmed.strip_prefix("```sh"))
-            .or_else(|| trimmed.strip_prefix("```shell"))
-            .or_else(|| trimmed.strip_prefix("```"))
-            .unwrap_or(trimmed);
-        without_fences
-            .strip_suffix("```")
-            .unwrap_or(without_fences)
-            .trim()
-            .into()
+
+        // 尝试提取 ```json ... ``` 或 ``` ... ``` 代码块
+        if let Some(start) = trimmed.find("```") {
+            let after_start = &trimmed[start + 3..];
+            let content_start = after_start.find('\n').map(|n| n + 1).unwrap_or(0);
+            let after_lang = &after_start[content_start..];
+            if let Some(end) = after_lang.find("```") {
+                let inner = after_lang[..end].trim();
+                if let Ok(value) = serde_json::from_str::<serde_json::Value>(inner) {
+                    return Some(value);
+                }
+            }
+        }
+
+        // 直接解析整个输出
+        serde_json::from_str(trimmed).ok()
+    }
+
+    /// 构造 Rust 项目的执行命令 / build the shell command for a Rust project.
+    ///
+    /// `code` 为 `src/lib.rs` 的完整内容。命令会:
+    /// 1. 在 `/workspace` 下创建 Cargo lib 项目
+    /// 2. 用 base64 写入 `src/lib.rs`(避免引号转义问题)
+    /// 3. 运行 `cargo test`
+    fn build_rust_command(code: &str) -> String {
+        let encoded = base64::engine::general_purpose::STANDARD.encode(code);
+        format!(
+            "cd /workspace && cargo new --lib axon_task && cd axon_task && echo {encoded} | base64 -d > src/lib.rs && cargo test"
+        )
     }
 }
 
@@ -66,11 +89,11 @@ impl Agent for CommandAgent {
             format!("Relevant memories:\n{}\n\n", lines.join("\n"))
         };
 
-        let system = "You are a helpful coding assistant. Given a task and relevant memories, output a single shell command that accomplishes it. Output only the command, no explanation, no markdown.";
-        let user = format!(
-            "{memory_context}Task: {}\n\nShell command:",
-            task.description
-        );
+        let system = "You are a Rust code generator. \
+Given a task, output ONLY a JSON object with a single field 'code' containing the full contents of src/lib.rs for a Rust library that satisfies the task and includes tests. \
+The code will be placed in /workspace/axon_task/src/lib.rs inside a rust:latest Docker container and `cargo test` will be run automatically. \
+No markdown, no explanations, no code fences outside the JSON string. Output only valid JSON.";
+        let user = format!("{memory_context}Task: {}\n\nJSON:", task.description);
 
         let req = CompletionRequest {
             model: String::new(), // 使用 provider 默认模型
@@ -87,12 +110,24 @@ impl Agent for CommandAgent {
                 },
             ],
             tools: vec![],
-            temperature: 0.2,
-            max_tokens: Some(256),
+            temperature: 0.1,
+            max_tokens: Some(1024),
         };
 
         let resp = llm.complete(req).await?;
-        let command = Self::clean_command(&resp.message.content);
+        let raw = resp.message.content.trim();
+
+        let command = if let Some(json) = Self::extract_code_json(raw) {
+            if let Some(code) = json.get("code").and_then(|v| v.as_str()) {
+                Self::build_rust_command(code)
+            } else {
+                // 回退:把原始输出当作 shell 命令
+                raw.into()
+            }
+        } else {
+            // 回退:把原始输出当作 shell 命令
+            raw.into()
+        };
 
         Ok(AgentOutput {
             summary: command,
@@ -105,11 +140,15 @@ impl Agent for CommandAgent {
 
 #[cfg(test)]
 mod tests {
+    use async_trait::async_trait;
+
     use super::*;
+    use axon_core::MemoryId;
     use axon_llm::{
         Capabilities, CompletionRequest, CompletionResponse, Delta, FinishReason, LlmProvider,
         Message, Role, Usage,
     };
+    use axon_memory::{Memory, MemoryFilter, RecallQuery};
 
     struct MockLlm {
         response: String,
@@ -123,8 +162,7 @@ mod tests {
         fn capabilities(&self) -> Capabilities {
             Capabilities::default()
         }
-        async fn complete(&self, req: CompletionRequest) -> Result<CompletionResponse> {
-            assert!(req.messages.iter().any(|m| m.role == Role::User));
+        async fn complete(&self, _req: CompletionRequest) -> Result<CompletionResponse> {
             Ok(CompletionResponse {
                 message: Message {
                     role: Role::Assistant,
@@ -144,64 +182,102 @@ mod tests {
 
     #[async_trait]
     impl MemoryStore for DummyMemory {
-        async fn store(&self, _mem: axon_memory::Memory) -> Result<axon_core::MemoryId> {
+        async fn store(&self, _mem: Memory) -> Result<MemoryId> {
             Ok("m1".into())
         }
-        async fn recall(
-            &self,
-            _query: &axon_memory::RecallQuery,
-        ) -> Result<Vec<axon_memory::Memory>> {
+        async fn recall(&self, _query: &RecallQuery) -> Result<Vec<Memory>> {
             Ok(vec![])
         }
-        async fn list(
-            &self,
-            _filter: &axon_memory::MemoryFilter,
-        ) -> Result<Vec<axon_memory::Memory>> {
+        async fn list(&self, _filter: &MemoryFilter) -> Result<Vec<Memory>> {
             Ok(vec![])
         }
-        async fn get(&self, _id: &axon_core::MemoryId) -> Result<Option<axon_memory::Memory>> {
+        async fn get(&self, _id: &MemoryId) -> Result<Option<Memory>> {
             Ok(None)
         }
-        async fn adjust_weight(&self, _id: &axon_core::MemoryId, _weight: f32) -> Result<()> {
+        async fn adjust_weight(&self, _id: &MemoryId, _weight: f32) -> Result<()> {
             Ok(())
         }
-        async fn forget(&self, _id: &axon_core::MemoryId) -> Result<()> {
+        async fn forget(&self, _id: &MemoryId) -> Result<()> {
             Ok(())
         }
     }
 
-    /// 验证 CommandAgent 从 LLM 响应中提取出纯命令。
-    #[tokio::test]
-    async fn execute_extracts_command() {
-        let agent = CommandAgent::new();
-        let task = Task {
+    fn sample_task(description: &str) -> Task {
+        Task {
             id: "t1".into(),
             parent: None,
-            title: "hello".into(),
-            description: "create a hello.txt file".into(),
+            title: "task".into(),
+            description: description.into(),
             priority: axon_proto::Priority::Normal,
             state: axon_proto::TaskState::Running,
             dependencies: vec![],
             created_at: 0,
             updated_at: 0,
             acceptance: vec![],
-        };
-        let llm = MockLlm {
-            response: "```bash\ntouch hello.txt\n```".into(),
-        };
-
-        let output = agent.execute(&task, &llm, &DummyMemory).await.unwrap();
-        assert_eq!(output.summary, "touch hello.txt");
-        assert!(output.self_check_passed);
+        }
     }
 
-    /// 验证 clean_command 能处理多种 markdown 代码块。
+    /// 验证 CommandAgent 把 JSON 中的 code 包装成可执行的 Rust 构建命令。
+    #[tokio::test]
+    async fn execute_builds_rust_command_from_json() {
+        let agent = CommandAgent::new();
+        let code = r#"pub fn hello() -> &'static str { "hello world" }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
     #[test]
-    fn clean_command_strips_fences() {
-        assert_eq!(
-            CommandAgent::clean_command("```sh\necho hi\n```"),
-            "echo hi"
-        );
-        assert_eq!(CommandAgent::clean_command("  echo hi  "), "echo hi");
+    fn it_works() {
+        assert_eq!(hello(), "hello world");
+    }
+}"#;
+        let response = serde_json::json!({ "code": code }).to_string();
+        let llm = MockLlm { response };
+
+        let output = agent
+            .execute(
+                &sample_task("write a hello world function"),
+                &llm,
+                &DummyMemory,
+            )
+            .await
+            .unwrap();
+
+        assert!(output
+            .summary
+            .starts_with("cd /workspace && cargo new --lib"));
+        assert!(output.summary.contains("base64 -d > src/lib.rs"));
+        assert!(output.summary.contains("cargo test"));
+    }
+
+    /// 验证 CommandAgent 能处理被 markdown 代码块包裹的 JSON。
+    #[tokio::test]
+    async fn execute_extracts_json_from_markdown_fence() {
+        let agent = CommandAgent::new();
+        let response = "```json\n{\"code\":\"pub fn hi() {}\"}\n```".into();
+        let llm = MockLlm { response };
+
+        let output = agent
+            .execute(&sample_task("test"), &llm, &DummyMemory)
+            .await
+            .unwrap();
+
+        assert!(output.summary.contains("base64 -d > src/lib.rs"));
+    }
+
+    /// 验证当 LLM 未返回合法 JSON 时,CommandAgent 回退使用原始输出。
+    #[tokio::test]
+    async fn execute_falls_back_to_raw_output() {
+        let agent = CommandAgent::new();
+        let response = "echo hello".into();
+        let llm = MockLlm { response };
+
+        let output = agent
+            .execute(&sample_task("test"), &llm, &DummyMemory)
+            .await
+            .unwrap();
+
+        assert_eq!(output.summary, "echo hello");
     }
 }

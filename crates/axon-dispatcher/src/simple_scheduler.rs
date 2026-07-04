@@ -43,6 +43,7 @@ pub struct SimpleScheduler<I, A> {
     llm: Arc<dyn LlmProvider>,
     memory: Arc<dyn MemoryStore>,
     config: SchedulerConfig,
+    vm_spec: VmSpec,
     results: Arc<Mutex<Vec<TaskResult>>>,
 }
 
@@ -52,6 +53,8 @@ where
     A: Agent,
 {
     /// 创建调度器 / create a scheduler.
+    ///
+    /// `vm_spec` 作为每个任务启动容器/VM 的模板规格。
     pub fn new(
         queue: Arc<crate::InProcessQueue>,
         isolation: Arc<I>,
@@ -59,6 +62,7 @@ where
         llm: Arc<dyn LlmProvider>,
         memory: Arc<dyn MemoryStore>,
         config: SchedulerConfig,
+        vm_spec: VmSpec,
     ) -> Self {
         Self {
             queue,
@@ -67,6 +71,7 @@ where
             llm,
             memory,
             config,
+            vm_spec,
             results: Arc::new(Mutex::new(vec![])),
         }
     }
@@ -78,17 +83,7 @@ where
 
     /// 处理单个任务 / process one task end-to-end.
     async fn process_task(&self, task: Task) -> Result<()> {
-        let vm_spec = VmSpec {
-            vcpus: 1,
-            mem_mb: 256,
-            rootfs: "alpine:latest".into(),
-            kernel: None,
-            workspace: None,
-            env: vec![],
-            network: false,
-        };
-
-        let vm = match self.isolation.create_vm(vm_spec).await {
+        let vm = match self.isolation.create_vm(self.vm_spec.clone()).await {
             Ok(vm) => vm,
             Err(e) => {
                 self.queue.update_state(&task.id, TaskState::Failed).await?;
@@ -112,6 +107,7 @@ where
             env: vec![],
             timeout_secs: Some(self.config.task_timeout_secs),
         };
+        tracing::info!(command = %agent_output.summary, "executing generated command");
 
         let exec_result = self.isolation.exec(&vm, command).await;
         let (state, result_opt) = match &exec_result {
@@ -361,6 +357,15 @@ mod tests {
             Arc::new(DummyLlm),
             Arc::new(DummyMemory),
             SchedulerConfig::default(),
+            VmSpec {
+                vcpus: 1,
+                mem_mb: 256,
+                rootfs: "alpine:latest".into(),
+                kernel: None,
+                workspace: None,
+                env: vec![],
+                network: false,
+            },
         );
 
         scheduler

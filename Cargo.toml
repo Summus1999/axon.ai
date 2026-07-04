@@ -66,6 +66,9 @@ qdrant-client = "1.13"
 # 本地嵌入式 KV / embedded KV
 redb = "2.4"
 
+# Base64 编解码 / base64 encoding
+base64 = "0.22"
+
 # 集成测试容器 / integration test containers
 testcontainers = "0.23"
 

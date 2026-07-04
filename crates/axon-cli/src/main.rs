@@ -5,13 +5,9 @@
 //! 并支持 `axon memory list/forget/adjust/init`。
 
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
 
-use axon_brain::{CommandAgent, Goal, Planner, SimplePlanner};
-use axon_dispatcher::{InProcessQueue, Scheduler, SchedulerConfig, SimpleScheduler};
-use axon_isolation::DockerProvider;
 use axon_memory::{
     HybridMemoryStore, MemoryFilter, MemoryKind, MemoryStore, QdrantStore, RedbStore,
 };
@@ -76,7 +72,17 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt().with_env_filter(level).init();
 
     match cli.command {
-        Commands::Run { goal } => run_goal(&goal).await?,
+        Commands::Run { goal } => {
+            let results =
+                axon_cli::run_goal(&goal, std::path::Path::new("."), "rust:latest").await?;
+            println!("✓ 任务调度完成，共 {} 个结果", results.len());
+            for r in results {
+                println!(
+                    "  - 任务 {}: exit_code={}\n    stdout: {}\n    stderr: {}",
+                    r.task_id, r.exit_code, r.stdout, r.stderr
+                );
+            }
+        }
         Commands::Tasks => {
             println!("(M1:任务列表留待后续实现，当前调度器为进程内队列)");
         }
@@ -170,69 +176,6 @@ fn parse_memory_kind(s: &str) -> Option<MemoryKind> {
         "user_profile" => Some(MemoryKind::UserProfile),
         _ => None,
     }
-}
-
-/// 执行单个目标 / execute a single goal end-to-end.
-///
-/// 构造 Planner、Scheduler、Agent、LLM、Memory 等组件并跑通调度链路。
-async fn run_goal(goal: &str) -> anyhow::Result<()> {
-    tracing::info!(%goal, "提交任务");
-
-    let llm = axon_llm::create_provider_from_env()
-        .map_err(|e| anyhow::anyhow!("failed to create LLM provider: {e}"))?;
-    let memory = Arc::new(create_memory_store().await?);
-    let planner = SimplePlanner::new();
-
-    let plan = planner
-        .plan(
-            &Goal {
-                description: goal.into(),
-                context: vec![],
-            },
-            &*memory,
-            &*llm,
-        )
-        .await
-        .map_err(|e| anyhow::anyhow!("planning failed: {e}"))?;
-
-    tracing::info!(task_count = plan.tasks.len(), "规划完成");
-
-    let queue = Arc::new(InProcessQueue::new());
-    let isolation = Arc::new(DockerProvider::new());
-    let agent = Arc::new(CommandAgent::new());
-    let scheduler = SimpleScheduler::new(
-        queue,
-        isolation,
-        agent,
-        llm,
-        memory,
-        SchedulerConfig {
-            max_concurrency: 1,
-            task_timeout_secs: 60,
-            max_retries: 0,
-        },
-    );
-
-    scheduler
-        .submit(plan.tasks, plan.dependencies)
-        .await
-        .map_err(|e| anyhow::anyhow!("submit failed: {e}"))?;
-
-    scheduler
-        .run()
-        .await
-        .map_err(|e| anyhow::anyhow!("scheduler failed: {e}"))?;
-
-    let results = scheduler.results().await;
-    println!("✓ 任务调度完成，共 {} 个结果", results.len());
-    for r in results {
-        println!(
-            "  - 任务 {}: exit_code={}\n    stdout: {}\n    stderr: {}",
-            r.task_id, r.exit_code, r.stdout, r.stderr
-        );
-    }
-
-    Ok(())
 }
 
 #[cfg(test)]
