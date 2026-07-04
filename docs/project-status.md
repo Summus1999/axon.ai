@@ -194,7 +194,7 @@ M5  ×    0%  未做
 
 | ID | 任务 | 状态 | 关联 |
 |----|------|------|------|
-| **M1-T1** | LLM Provider 抽象实现:OpenAI provider(S1.3.1/S1.3.2) | √ | 待提交：修复 reasoning_content + DeepSeek 冒烟测试 |
+| **M1-T1** | LLM Provider 抽象实现:OpenAI provider(S1.3.1/S1.3.2) | √ | `ed637c7` |
 | **M1-T2** | LLM Provider 抽象实现:Ollama provider(S1.3.1) | ○ | — |
 | **M1-T3** | LlmRouter:按配置路由 provider(S1.3.1) | × | — |
 | **M1-T4** | Brain:单步 Planner(Goal → 单 Task)(S1.1.1/S1.2.1) | × | — |
