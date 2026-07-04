@@ -279,10 +279,11 @@
 - **交付**:workspace + trait 占位 + 技术选型文档
 - **状态**:已完成并提交
 
-### v0.2 — M1 单机可用 (Single-Node MVP)
+### v0.2 — M1 单机可用 (Single-Node MVP) ✅ 已完成
 - **用户价值**:开发者可用 CLI 提交单步开发任务,在 Docker 隔离中执行并自检
 - **关键 Stories**:US-001、US-002、US-003、US-006
 - **验收**:端到端跑通 `axon run` → Docker 执行 → 自检 → 回报
+- **状态**:已完成并验收(`283b42e`/`1fca0db`)
 - **依赖**:OpenAI/DeepSeek API key、本地 Docker
 
 ### v0.3 — M2 记忆系统
