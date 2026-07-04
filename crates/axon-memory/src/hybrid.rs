@@ -77,7 +77,7 @@ where
     async fn list(&self, filter: &MemoryFilter) -> Result<Vec<Memory>> {
         let mut items = self.semantic.list(filter).await?;
         items.extend(self.episodic.list(filter).await?);
-        items.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        items.sort_by_key(|m| std::cmp::Reverse(m.created_at));
         Ok(items)
     }
 
