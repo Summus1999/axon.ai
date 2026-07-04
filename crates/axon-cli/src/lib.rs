@@ -8,33 +8,41 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use axon_brain::{CommandAgent, Goal, Planner, SimplePlanner};
+use axon_core::Config;
 use axon_dispatcher::{InProcessQueue, Scheduler, SchedulerConfig, SimpleScheduler, TaskResult};
 use axon_isolation::{DockerProvider, VmSpec};
 use axon_memory::{HybridMemoryStore, InMemoryStore, MemoryStore, QdrantStore, RedbStore};
 use serde::{Deserialize, Serialize};
 
-/// 创建记忆存储 / create a memory store from environment config.
+/// 根据全局配置创建记忆存储 / create a memory store from the global config.
 ///
-/// 通过 `AXON_MEMORY_BACKEND` 选择后端:
-/// - `memory`(默认): 进程内 `InMemoryStore`,不依赖外部服务,适合 M1
-/// - `hybrid`: `HybridMemoryStore` = `RedbStore` + `QdrantStore`(需要 OpenAI embedding)
-pub async fn create_memory_store() -> anyhow::Result<Arc<dyn MemoryStore>> {
-    let backend = std::env::var("AXON_MEMORY_BACKEND").unwrap_or_else(|_| "memory".into());
-    match backend.as_str() {
-        "hybrid" => create_hybrid_memory_store().await,
-        _ => Ok(Arc::new(InMemoryStore::new())),
+/// 后端由 `memory.backend` 决定:
+/// - `memory`(默认): 进程内 `InMemoryStore`,不依赖外部服务
+/// - `hybrid`: `HybridMemoryStore` = `RedbStore` + `QdrantStore`(需要 embedding provider)
+pub async fn create_memory_store_from_config(cfg: &Config) -> anyhow::Result<Arc<dyn MemoryStore>> {
+    match cfg.memory.backend.as_str() {
+        "memory" => Ok(Arc::new(InMemoryStore::new())),
+        "hybrid" => create_hybrid_memory_store_from_config(cfg).await,
+        other => Err(anyhow::anyhow!("unsupported memory backend: {other}")),
     }
 }
 
-/// 创建混合记忆存储 / create the hybrid memory store.
-async fn create_hybrid_memory_store() -> anyhow::Result<Arc<dyn MemoryStore>> {
-    let redb_path = std::env::var("AXON_MEMORY_REDB_PATH")
+/// 根据配置创建混合记忆存储 / create the hybrid memory store from config.
+async fn create_hybrid_memory_store_from_config(
+    cfg: &Config,
+) -> anyhow::Result<Arc<dyn MemoryStore>> {
+    let redb_path = cfg
+        .memory
+        .kv_path
+        .as_deref()
         .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from(".axon/memory.redb"));
-    let qdrant_url =
-        std::env::var("AXON_MEMORY_QDRANT_URL").unwrap_or_else(|_| "http://localhost:6334".into());
-    let qdrant_collection =
-        std::env::var("AXON_MEMORY_QDRANT_COLLECTION").unwrap_or_else(|_| "axon_memories".into());
+        .unwrap_or_else(|| PathBuf::from(".axon/memory.redb"));
+    let qdrant_url = cfg
+        .memory
+        .qdrant_url
+        .clone()
+        .unwrap_or_else(|| "http://localhost:6334".into());
+    let qdrant_collection = cfg.memory.qdrant_collection.clone();
 
     let embedder: Arc<dyn axon_llm::EmbeddingProvider> =
         axon_llm::create_embedding_provider_from_env()
@@ -63,7 +71,8 @@ pub async fn run_goal(
 
     let llm = axon_llm::create_provider_from_env()
         .map_err(|e| anyhow::anyhow!("failed to create LLM provider: {e}"))?;
-    let memory = create_memory_store().await?;
+    let config = Config::load().map_err(|e| anyhow::anyhow!("failed to load config: {e}"))?;
+    let memory = create_memory_store_from_config(&config).await?;
     let planner = SimplePlanner::new();
 
     let plan = planner
@@ -247,18 +256,13 @@ mod tests {
         std::env::set_current_dir(original).unwrap();
     }
 
-    /// 默认情况下 `create_memory_store` 创建 InMemoryStore,不依赖外部服务。
+    /// `memory` backend 返回可用的 InMemoryStore,不依赖外部服务。
     #[tokio::test]
-    async fn default_backend_creates_in_memory_store() {
-        let old;
-        {
-            let _lock = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-            old = std::env::var("AXON_MEMORY_BACKEND").ok();
-            std::env::remove_var("AXON_MEMORY_BACKEND");
-        }
+    async fn memory_backend_creates_in_memory_store() {
+        let mut cfg = Config::default();
+        cfg.memory.backend = "memory".into();
 
-        let store = create_memory_store().await.unwrap();
-        // 验证 store 可用:写入并召回。
+        let store = create_memory_store_from_config(&cfg).await.unwrap();
         let id = store
             .store(axon_memory::Memory {
                 id: String::new(),
@@ -273,13 +277,35 @@ mod tests {
             .await
             .unwrap();
         assert!(!id.is_empty());
+    }
 
+    /// 未知 backend 返回明确错误。
+    #[tokio::test]
+    async fn unknown_backend_returns_error() {
+        let mut cfg = Config::default();
+        cfg.memory.backend = "unknown".into();
+
+        let result = create_memory_store_from_config(&cfg).await;
+        assert!(result.is_err(), "unknown backend should fail");
+    }
+
+    /// `hybrid` backend 在缺少 embedding provider 时返回错误。
+    #[tokio::test]
+    async fn hybrid_backend_fails_without_embedding_provider() {
         {
             let _lock = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-            match old {
-                Some(v) => std::env::set_var("AXON_MEMORY_BACKEND", v),
-                None => std::env::remove_var("AXON_MEMORY_BACKEND"),
+            for key in ["OPENAI_API_KEY", "GLM_API_KEY", "EMBEDDING_PROVIDER"] {
+                std::env::remove_var(key);
             }
         }
+
+        let mut cfg = Config::default();
+        cfg.memory.backend = "hybrid".into();
+
+        let result = create_memory_store_from_config(&cfg).await;
+        assert!(
+            result.is_err(),
+            "hybrid backend should fail when no embedder is available"
+        );
     }
 }

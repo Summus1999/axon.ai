@@ -4,13 +4,10 @@
 //! M2 实现 `axon run --goal` 使用 HybridMemoryStore(redb + Qdrant)，
 //! 并支持 `axon memory list/forget/adjust/init`。
 
-use std::path::PathBuf;
-
 use clap::{Parser, Subcommand};
 
-use axon_memory::{
-    HybridMemoryStore, MemoryFilter, MemoryKind, MemoryStore, QdrantStore, RedbStore,
-};
+use axon_core::Config;
+use axon_memory::{MemoryFilter, MemoryKind};
 
 #[derive(Parser, Debug)]
 #[command(name = "axon", version, about = "axon.ai — AI harness 开发框架 CLI", long_about = None)]
@@ -112,41 +109,19 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// 读取记忆相关环境变量 / read memory-related environment variables.
-fn memory_config() -> (PathBuf, String, String) {
-    let redb_path = std::env::var("AXON_MEMORY_REDB_PATH")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from(".axon/memory.redb"));
-    let qdrant_url =
-        std::env::var("AXON_MEMORY_QDRANT_URL").unwrap_or_else(|_| "http://localhost:6334".into());
-    let qdrant_collection =
-        std::env::var("AXON_MEMORY_QDRANT_COLLECTION").unwrap_or_else(|_| "axon_memories".into());
-    (redb_path, qdrant_url, qdrant_collection)
-}
-
-/// 创建 HybridMemoryStore / create a hybrid memory store from env config.
-async fn create_memory_store() -> anyhow::Result<HybridMemoryStore<RedbStore, QdrantStore>> {
-    let (redb_path, qdrant_url, qdrant_collection) = memory_config();
-    let embedder: std::sync::Arc<dyn axon_llm::EmbeddingProvider> =
-        axon_llm::create_embedding_provider_from_env()
-            .map_err(|e| anyhow::anyhow!("failed to create embedding provider: {e}"))?
-            .into();
-
-    let semantic = RedbStore::new(&redb_path)
-        .map_err(|e| anyhow::anyhow!("failed to open redb store: {e}"))?;
-    let episodic = QdrantStore::new(qdrant_url, qdrant_collection, embedder)
-        .await
-        .map_err(|e| anyhow::anyhow!("failed to connect Qdrant store: {e}"))?;
-
-    Ok(HybridMemoryStore::new(semantic, episodic))
+/// 从默认路径加载配置 / load global config from default paths.
+fn load_config() -> anyhow::Result<Config> {
+    Config::load().map_err(|e| anyhow::anyhow!("failed to load config: {e}"))
 }
 
 /// 处理 memory 子命令 / handle memory subcommands.
 async fn handle_memory(action: MemoryAction) -> anyhow::Result<()> {
+    let cfg = load_config()?;
+    let store = axon_cli::create_memory_store_from_config(&cfg).await?;
+
     match action {
         MemoryAction::Init => {
-            let store = create_memory_store().await?;
-            // 通过 store 一条空操作验证两端都可用。
+            // 通过 list 验证 store 可用。
             let list = store.list(&MemoryFilter::default()).await?;
             println!("✓ 记忆存储初始化完成，当前共有 {} 条记忆", list.len());
         }
@@ -155,7 +130,6 @@ async fn handle_memory(action: MemoryAction) -> anyhow::Result<()> {
             source,
             min_weight,
         } => {
-            let store = create_memory_store().await?;
             let filter = MemoryFilter {
                 kind: kind.as_deref().and_then(parse_memory_kind),
                 source,
@@ -171,12 +145,10 @@ async fn handle_memory(action: MemoryAction) -> anyhow::Result<()> {
             }
         }
         MemoryAction::Forget { id } => {
-            let store = create_memory_store().await?;
             store.forget(&id).await?;
             println!("✓ 已遗忘记忆 {}", id);
         }
         MemoryAction::Adjust { id, weight } => {
-            let store = create_memory_store().await?;
             store.adjust_weight(&id, weight).await?;
             println!("✓ 已调节记忆 {} 权重为 {:.2}", id, weight);
         }

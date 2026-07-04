@@ -1,0 +1,20 @@
+# axon.ai M2 本地开发依赖 / local development services for M2 memory system
+#
+# 启动 Qdrant:
+#   docker compose up -d qdrant
+# 查看日志:
+#   docker compose logs -f qdrant
+# 停止:
+#   docker compose down
+
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.13.4
+    container_name: axon-qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - ./.axon/qdrant_storage:/qdrant/storage
+    environment:
+      QDRANT__SERVICE__GRPC_PORT: "6334"

@@ -64,12 +64,37 @@ pub struct LlmConfig {
     pub default_model: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryConfig {
+    /// 记忆后端: `memory` | `hybrid`,默认 `memory`。
+    #[serde(default = "default_memory_backend")]
+    pub backend: String,
     /// Qdrant 服务地址(留空则用嵌入式)。
     pub qdrant_url: Option<String>,
     /// 本地 KV 数据库路径。
     pub kv_path: Option<String>,
+    /// Qdrant collection 名称,默认 `axon_memories`。
+    #[serde(default = "default_qdrant_collection")]
+    pub qdrant_collection: String,
+}
+
+fn default_memory_backend() -> String {
+    "memory".to_string()
+}
+
+fn default_qdrant_collection() -> String {
+    "axon_memories".to_string()
+}
+
+impl Default for MemoryConfig {
+    fn default() -> Self {
+        Self {
+            backend: default_memory_backend(),
+            qdrant_url: None,
+            kv_path: None,
+            qdrant_collection: default_qdrant_collection(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -297,5 +322,44 @@ default_provider = "openai"
         let toml = temp_file("toml", "this is not valid toml [");
         let result = Config::load_with_paths(&toml, "/nonexistent.env");
         assert!(matches!(result, Err(Error::Config(_))));
+    }
+
+    /// MemoryConfig 默认值符合预期。
+    #[test]
+    fn memory_config_defaults() {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        clear_axon_env();
+
+        let cfg = Config::load_with_paths("/nonexistent.toml", "/nonexistent.env").unwrap();
+        assert_eq!(cfg.memory.backend, "memory");
+        assert_eq!(cfg.memory.qdrant_collection, "axon_memories");
+        assert!(cfg.memory.qdrant_url.is_none());
+        assert!(cfg.memory.kv_path.is_none());
+    }
+
+    /// 环境变量覆盖 memory 配置。
+    #[test]
+    fn env_overrides_memory_config() {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        clear_axon_env();
+
+        std::env::set_var("AXON_MEMORY__BACKEND", "hybrid");
+        std::env::set_var("AXON_MEMORY__QDRANT_URL", "http://localhost:6334");
+        std::env::set_var("AXON_MEMORY__KV_PATH", ".axon/memory.redb");
+        std::env::set_var("AXON_MEMORY__QDRANT_COLLECTION", "test_memories");
+
+        let cfg = Config::load_with_paths("/nonexistent.toml", "/nonexistent.env").unwrap();
+        assert_eq!(cfg.memory.backend, "hybrid");
+        assert_eq!(
+            cfg.memory.qdrant_url.as_deref(),
+            Some("http://localhost:6334")
+        );
+        assert_eq!(cfg.memory.kv_path.as_deref(), Some(".axon/memory.redb"));
+        assert_eq!(cfg.memory.qdrant_collection, "test_memories");
+
+        std::env::remove_var("AXON_MEMORY__BACKEND");
+        std::env::remove_var("AXON_MEMORY__QDRANT_URL");
+        std::env::remove_var("AXON_MEMORY__KV_PATH");
+        std::env::remove_var("AXON_MEMORY__QDRANT_COLLECTION");
     }
 }
