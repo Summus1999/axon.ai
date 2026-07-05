@@ -16,13 +16,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
 use tokio::fs;
 use tokio::process::Command;
 use tokio::time::sleep;
-use tracing;
 
-use axon_core::{Error, Result, VmId};
+use axon_core::{Error, Result};
 
 use crate::{
     Backend, Command as VmCommand, ExecOutput, IsolationProvider, Snapshot, VmHandle, VmSpec,
@@ -116,7 +114,6 @@ struct FcProcess {
 }
 
 /// 单个 VM 实例状态 / internal state for one microVM.
-#[derive(Debug)]
 struct VmInstance {
     handle: VmHandle,
     process: FcProcess,
@@ -139,7 +136,7 @@ struct SshExecBackend;
 
 #[async_trait]
 impl ExecBackend for SshExecBackend {
-    async fn exec(&self, vm: &VmHandle, cmd: &VmCommand) -> Result<ExecOutput> {
+    async fn exec(&self, _vm: &VmHandle, cmd: &VmCommand) -> Result<ExecOutput> {
         // 从 VM 环境变量中读取 SSH 连接参数。
         let host = cmd
             .env
@@ -209,7 +206,6 @@ impl ExecBackend for SshExecBackend {
 }
 
 /// Firecracker 隔离 provider / Firecracker isolation provider.
-#[derive(Debug)]
 pub struct FirecrackerProvider {
     /// firecracker 可执行文件路径 / path to the firecracker binary.
     binary: PathBuf,
@@ -223,6 +219,19 @@ pub struct FirecrackerProvider {
     client_factory: Arc<dyn Fn(&Path) -> Arc<dyn FirecrackerClient> + Send + Sync>,
     /// exec 后端 / command execution backend.
     exec_backend: Arc<dyn ExecBackend>,
+}
+
+impl std::fmt::Debug for FirecrackerProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FirecrackerProvider")
+            .field("binary", &self.binary)
+            .field("kernel", &self.kernel)
+            .field("rootfs", &self.rootfs)
+            .field("workdir_root", &self.workdir_root)
+            .field("client_factory", &"<factory>")
+            .field("exec_backend", &"<exec backend>")
+            .finish_non_exhaustive()
+    }
 }
 
 impl FirecrackerProvider {
@@ -390,7 +399,7 @@ impl IsolationProvider for FirecrackerProvider {
             .spawn()
             .map_err(Error::Io)?;
 
-        let pid = child
+        let _pid = child
             .id()
             .ok_or_else(|| Error::Isolation("failed to get firecracker pid".into()))?;
 
@@ -411,7 +420,7 @@ impl IsolationProvider for FirecrackerProvider {
     }
 
     async fn exec(&self, vm: &VmHandle, cmd: VmCommand) -> Result<ExecOutput> {
-        self.exec_backend.exec(vm, cmd).await
+        self.exec_backend.exec(vm, &cmd).await
     }
 
     async fn snapshot(&self, vm: &VmHandle) -> Result<Snapshot> {
@@ -463,7 +472,6 @@ impl IsolationProvider for FirecrackerProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;
 
     #[derive(Debug, Default)]
