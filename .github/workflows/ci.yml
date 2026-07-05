@@ -41,12 +41,17 @@ jobs:
         run: cargo test --workspace
 
   # ── Firecracker 集成(仅 Linux + KVM)────────────────────────
+  # fixture(firecracker/vmlinux/rootfs.ext4)已提交进仓库(Git LFS),
+  # 见 crates/axon-isolation/tests/fixtures/。避免依赖外部下载源(vmlinux 自
+  # Firecracker v1.3.0 起不再随 release 发布,旧 URL 已 404)。
   firecracker:
     name: firecracker integration
     runs-on: ubuntu-latest
     needs: check
     steps:
       - uses: actions/checkout@v4
+        with:
+          lfs: true
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -60,34 +65,16 @@ jobs:
           sudo apt-get install -y qemu-kvm
           sudo chmod 666 /dev/kvm
 
-      - name: Download Firecracker + vmlinux
+      - name: Verify fixtures present (LFS)
         run: |
-          mkdir -p /tmp/firecracker-fixtures
-          cd /tmp/firecracker-fixtures
-          ARCH=x86_64
-          RELEASE_URL="https://github.com/firecracker-microvm/firecracker/releases/download/v1.7.0"
-          curl -fsSL -o firecracker.tgz "${RELEASE_URL}/firecracker-v1.7.0-${ARCH}.tgz"
-          tar -xzf firecracker.tgz --strip-components=1
-          chmod +x firecracker
-          curl -fsSL -o vmlinux "${RELEASE_URL}/vmlinux-5.10.209"
-          ls -la
-
-      - name: Build minimal Alpine rootfs
-        run: |
-          cd /tmp/firecracker-fixtures
-          curl -fsSL -o alpine-minirootfs.tar.gz "https://dl-cdn.alpinelinux.org/alpine/v3.18/releases/x86_64/alpine-minirootfs-3.18.4-x86_64.tar.gz"
-          truncate -s 200M rootfs.ext4
-          mkfs.ext4 rootfs.ext4
-          mkdir -p /tmp/rootfs-mnt
-          sudo mount rootfs.ext4 /tmp/rootfs-mnt
-          sudo tar -xzf alpine-minirootfs.tar.gz -C /tmp/rootfs-mnt
-          sudo umount /tmp/rootfs-mnt
-          ls -la rootfs.ext4
+          ls -la crates/axon-isolation/tests/fixtures/
+          test -s crates/axon-isolation/tests/fixtures/firecracker
+          test -s crates/axon-isolation/tests/fixtures/vmlinux
+          test -s crates/axon-isolation/tests/fixtures/rootfs.ext4
+          file crates/axon-isolation/tests/fixtures/vmlinux
 
       - name: Run Firecracker integration tests
         env:
-          FIRECRACKER_BINARY: /tmp/firecracker-fixtures/firecracker
-          KERNEL_IMAGE: /tmp/firecracker-fixtures/vmlinux
-          ROOTFS_IMAGE: /tmp/firecracker-fixtures/rootfs.ext4
           RUST_BACKTRACE: 1
-        run: cargo test -p axon-isolation --test firecracker_integration -- --ignored --nocapture
+        working-directory: crates/axon-isolation
+        run: cargo test --test firecracker_integration -- --ignored --nocapture

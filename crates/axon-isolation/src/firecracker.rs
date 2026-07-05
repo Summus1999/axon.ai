@@ -32,6 +32,11 @@ pub trait FirecrackerClient: Send + Sync {
     /// 发送 PUT 请求并返回响应体 / send a PUT request to the API socket.
     async fn put(&self, path: &str, body: &str) -> Result<String>;
 
+    /// 发送 PATCH 请求并返回响应体 / send a PATCH request to the API socket.
+    ///
+    /// v1.7.0 起 Pause/Resume 改用 `PATCH /vm`,不再是 `PUT /actions`。
+    async fn patch(&self, path: &str, body: &str) -> Result<String>;
+
     /// 发送 GET 请求并返回响应体 / send a GET request to the API socket.
     async fn get(&self, path: &str) -> Result<String>;
 }
@@ -95,6 +100,10 @@ impl CurlClient {
 impl FirecrackerClient for CurlClient {
     async fn put(&self, path: &str, body: &str) -> Result<String> {
         self.request("PUT", path, Some(body)).await
+    }
+
+    async fn patch(&self, path: &str, body: &str) -> Result<String> {
+        self.request("PATCH", path, Some(body)).await
     }
 
     async fn get(&self, path: &str) -> Result<String> {
@@ -309,10 +318,11 @@ impl FirecrackerProvider {
         kernel: &Path,
         rootfs: &Path,
     ) -> Result<()> {
+        // Firecracker v1.7.0 将 `ht_enabled` 重命名为 `smt`(对称多线程)。
         let machine_config = serde_json::json!({
             "vcpu_count": spec.vcpus.max(1),
             "mem_size_mib": spec.mem_mb.max(128),
-            "ht_enabled": false,
+            "smt": false,
             "track_dirty_pages": true,
         });
         client
@@ -351,7 +361,6 @@ impl IsolationProvider for FirecrackerProvider {
         let workdir = self.workdir_root.join(&vm_id);
         fs::create_dir_all(&workdir).await.map_err(Error::Io)?;
         let socket = workdir.join("api.sock");
-        let log_path = workdir.join("firecracker.log");
 
         let kernel = spec
             .kernel
@@ -381,12 +390,10 @@ impl IsolationProvider for FirecrackerProvider {
         }
 
         let mut child = Command::new(&self.binary)
-            .arg("--api-socket")
+            .arg("--api-sock")
             .arg(&socket)
-            .arg("--log-path")
-            .arg(&log_path)
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .spawn()
             .map_err(Error::Io)?;
 
@@ -419,7 +426,8 @@ impl IsolationProvider for FirecrackerProvider {
         let socket = workdir.join("api.sock");
         let client = (self.client_factory)(&socket);
 
-        client.put("actions", r#"{"action_type": "Pause"}"#).await?;
+        // v1.7.0 起 Pause/Resume 改用 `PATCH /vm` + `{"state": "Paused"|"Resumed"}`。
+        client.patch("vm", r#"{"state": "Paused"}"#).await?;
 
         let snapshot_path = workdir.join("vm_state.snap");
         let mem_path = workdir.join("vm_memory.snap");
@@ -430,9 +438,7 @@ impl IsolationProvider for FirecrackerProvider {
         });
         client.put("snapshot/create", &body.to_string()).await?;
 
-        client
-            .put("actions", r#"{"action_type": "Resume"}"#)
-            .await?;
+        client.patch("vm", r#"{"state": "Resumed"}"#).await?;
 
         Ok(Snapshot {
             vm_id: vm.id.clone(),
@@ -467,16 +473,27 @@ mod tests {
 
     #[derive(Debug, Default)]
     struct MockClient {
-        requests: Mutex<Vec<(String, String)>>,
+        /// 记录 (method, path, body) 三元组,便于断言 PATCH vs PUT。
+        requests: Mutex<Vec<(String, String, String)>>,
     }
 
     #[async_trait]
     impl FirecrackerClient for MockClient {
         async fn put(&self, path: &str, body: &str) -> Result<String> {
-            self.requests
-                .lock()
-                .unwrap()
-                .push((path.to_string(), body.to_string()));
+            self.requests.lock().unwrap().push((
+                "PUT".to_string(),
+                path.to_string(),
+                body.to_string(),
+            ));
+            Ok("{}".to_string())
+        }
+
+        async fn patch(&self, path: &str, body: &str) -> Result<String> {
+            self.requests.lock().unwrap().push((
+                "PATCH".to_string(),
+                path.to_string(),
+                body.to_string(),
+            ));
             Ok("{}".to_string())
         }
 
@@ -526,18 +543,19 @@ mod tests {
 
         let reqs = client.requests.lock().unwrap();
         assert_eq!(reqs.len(), 4);
-        assert_eq!(reqs[0].0, "machine-config");
-        assert!(reqs[0].1.contains("\"vcpu_count\":2"));
-        assert!(reqs[0].1.contains("\"mem_size_mib\":512"));
-        assert_eq!(reqs[1].0, "boot-source");
-        assert!(reqs[1].1.contains("/custom/vmlinux"));
-        assert_eq!(reqs[2].0, "drives/rootfs");
-        assert!(reqs[2].1.contains("/custom/rootfs.ext4"));
-        assert_eq!(reqs[3].0, "actions");
-        assert!(reqs[3].1.contains("InstanceStart"));
+        assert_eq!(reqs[0].1, "machine-config");
+        assert!(reqs[0].2.contains("\"vcpu_count\":2"));
+        assert!(reqs[0].2.contains("\"mem_size_mib\":512"));
+        assert!(reqs[0].2.contains("\"smt\":false"));
+        assert_eq!(reqs[1].1, "boot-source");
+        assert!(reqs[1].2.contains("/custom/vmlinux"));
+        assert_eq!(reqs[2].1, "drives/rootfs");
+        assert!(reqs[2].2.contains("/custom/rootfs.ext4"));
+        assert_eq!(reqs[3].1, "actions");
+        assert!(reqs[3].2.contains("InstanceStart"));
     }
 
-    /// 验证 snapshot 发送 Pause、CreateSnapshot、Resume 请求。
+    /// 验证 snapshot 发送 PATCH Pause、CreateSnapshot、PATCH Resume 请求。
     #[tokio::test]
     async fn snapshot_sends_pause_create_resume() {
         let tmp = tempfile::tempdir().unwrap();
@@ -560,9 +578,16 @@ mod tests {
         assert_eq!(snap.vm_id, "vm-1");
         let reqs = client.requests.lock().unwrap();
         assert_eq!(reqs.len(), 3);
-        assert!(reqs[0].1.contains("Pause"));
-        assert_eq!(reqs[1].0, "snapshot/create");
-        assert!(reqs[1].1.contains("vm_state.snap"));
-        assert!(reqs[2].1.contains("Resume"));
+        // v1.7.0: Pause = PATCH /vm {"state":"Paused"}
+        assert_eq!(reqs[0].0, "PATCH");
+        assert_eq!(reqs[0].1, "vm");
+        assert!(reqs[0].2.contains("Paused"));
+        assert_eq!(reqs[1].0, "PUT");
+        assert_eq!(reqs[1].1, "snapshot/create");
+        assert!(reqs[1].2.contains("vm_state.snap"));
+        // v1.7.0: Resume = PATCH /vm {"state":"Resumed"}
+        assert_eq!(reqs[2].0, "PATCH");
+        assert_eq!(reqs[2].1, "vm");
+        assert!(reqs[2].2.contains("Resumed"));
     }
 }

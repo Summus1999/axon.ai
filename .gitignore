@@ -33,6 +33,10 @@ config.local.toml
 *.ext4
 *.vmlinux
 fc-*
+# 例外:CI 集成测试用的 fixture 镜像提交进仓库(由 Git LFS 跟踪)。
+!crates/axon-isolation/tests/fixtures/
+!crates/axon-isolation/tests/fixtures/vmlinux
+!crates/axon-isolation/tests/fixtures/rootfs.ext4
 
 # ── IDE / 编辑器 ──────────────────────────────────────
 .idea/

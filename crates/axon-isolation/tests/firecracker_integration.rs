@@ -10,19 +10,32 @@ use std::sync::Arc;
 
 use axon_isolation::{FirecrackerProvider, IsolationProvider, VmSpec};
 
-/// 从环境变量或默认路径获取 fixture / resolve a fixture path.
+/// 每个 fixture 名称对应的覆盖环境变量 / env override for each fixture.
+///
+/// 优先级:env var > 仓库内 `tests/fixtures/{name}` > None。
+/// env var 名与 CI workflow(`FIRECRACKER_BINARY`/`KERNEL_IMAGE`/`ROOTFS_IMAGE`)对齐。
 fn fixture(name: &str) -> Option<PathBuf> {
-    let env_key = name.to_uppercase().replace('-', "_");
-    if let Ok(val) = std::env::var(&env_key) {
+    let env_key = match name {
+        "firecracker" => "FIRECRACKER_BINARY",
+        "vmlinux" => "KERNEL_IMAGE",
+        "rootfs.ext4" => "ROOTFS_IMAGE",
+        other => {
+            // 兜底:未知 fixture 回退到大写名,保持向后兼容。
+            let fallback = other.to_uppercase().replace('-', "_");
+            return std::env::var(&fallback)
+                .ok()
+                .map(PathBuf::from)
+                .or_else(|| {
+                    let path = PathBuf::from(format!("tests/fixtures/{other}"));
+                    path.exists().then_some(path)
+                });
+        }
+    };
+    if let Ok(val) = std::env::var(env_key) {
         return Some(PathBuf::from(val));
     }
-    let default = format!("tests/fixtures/{name}");
-    let path = PathBuf::from(&default);
-    if path.exists() {
-        Some(path)
-    } else {
-        None
-    }
+    let path = PathBuf::from(format!("tests/fixtures/{name}"));
+    path.exists().then_some(path)
 }
 
 /// 验证能启动 microVM、拍快照并销毁。
@@ -34,11 +47,13 @@ async fn firecracker_lifecycle_create_snapshot_destroy() {
     let kernel = fixture("vmlinux").expect("KERNEL_IMAGE not set and default fixture missing");
     let rootfs = fixture("rootfs.ext4").expect("ROOTFS_IMAGE not set and default fixture missing");
 
+    let workdir =
+        std::env::var("AXON_FC_WORKDIR").unwrap_or_else(|_| ".axon/firecracker-tests".to_string());
     let provider = Arc::new(FirecrackerProvider::with_options(
         binary,
         Some(kernel),
         Some(rootfs),
-        Some(".axon/firecracker-tests"),
+        Some(workdir),
     ));
 
     let spec = VmSpec {
