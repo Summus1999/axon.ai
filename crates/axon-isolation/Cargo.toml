@@ -13,7 +13,9 @@ async-trait.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-tokio.workspace = true
+# 显式加 "fs":firecracker.rs 用 tokio::fs 操作 socket/workdir。
+# workspace 默认 tokio features 不含 fs,单 crate 编译(如 CI 的 firecracker job)会缺失。
+tokio = { workspace = true, features = ["fs"] }
 tracing.workspace = true
 
 [dev-dependencies]
