@@ -110,6 +110,11 @@ impl RemoteDispatcher {
         Self { state }
     }
 
+    /// 访问共享状态 / access the shared dispatcher state.
+    pub fn state(&self) -> Arc<RemoteDispatcherState> {
+        Arc::clone(&self.state)
+    }
+
     /// 提交任务到队列 / submit a task to the queue.
     pub async fn submit_task(&self, task: Task) -> AxonResult<()> {
         let mut tasks = self.state.tasks.write().await;
