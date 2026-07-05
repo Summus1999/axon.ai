@@ -11,6 +11,7 @@ members = [
     "crates/axon-proto",
     "crates/axon-cli",
     "crates/axon-dashboard",
+    "crates/axon-queue",
 ]
 
 # ── Workspace metadata ────────────────────────────────────────────────
@@ -72,6 +73,9 @@ base64 = "0.22"
 # 集成测试容器 / integration test containers
 testcontainers = "0.23"
 
+# 消息队列 / message broker
+async-nats = "0.38"
+
 # 临时目录 / temp directories for tests
 tempfile = "3"
 
@@ -90,6 +94,7 @@ axon-dispatcher = { version = "0.1.0", path = "crates/axon-dispatcher" }
 axon-isolation = { version = "0.1.0", path = "crates/axon-isolation" }
 axon-worker = { version = "0.1.0", path = "crates/axon-worker" }
 axon-proto = { version = "0.1.0", path = "crates/axon-proto" }
+axon-queue = { version = "0.1.0", path = "crates/axon-queue" }
 
 # ── 全局 profile 优化 ─────────────────────────────────────────────────
 [profile.release]
