@@ -337,13 +337,17 @@ dependencies = [
  "async-trait",
  "axon-brain",
  "axon-core",
+ "axon-isolation",
  "axon-llm",
  "axon-memory",
  "axon-proto",
+ "axon-queue",
+ "futures",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
  "tokio",
+ "tracing",
 ]
 
 [[package]]

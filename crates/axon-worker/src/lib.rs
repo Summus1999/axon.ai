@@ -6,6 +6,7 @@
 //! 具体实现(M1)使用 `axon-brain::Agent`。
 
 pub mod heartbeat;
+pub mod worker_node;
 
 use std::sync::Arc;
 use std::time::Duration;
