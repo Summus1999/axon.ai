@@ -323,7 +323,7 @@ pub trait MemoryStore: Send + Sync {
 ### 4.6 隔离执行环境 / Isolation: Firecracker microVM(主)+ Docker(开发期备选)
 
 **选型**:
-- **生产**: Firecracker microVM(`firec-rs` 或直接 REST API)
+- **生产**: Firecracker microVM(直接调用 REST API,规避 `firec-rs` 成熟度风险)
 - **开发期**: Docker(通过 `IsolationProvider` trait 抽象,本地无 KVM 时降级)
 
 **设计**:
@@ -337,8 +337,8 @@ pub trait IsolationProvider: Send + Sync {
     async fn destroy(&self, vm: VmHandle) -> Result<()>;
 }
 
-pub struct DockerProvider { /* 开发期 */ }
-pub struct FirecrackerProvider { /* 生产 */ }
+pub struct DockerProvider { /* 开发期,跨平台 */ }
+pub struct FirecrackerProvider { /* Linux 生产,直接调 Firecracker HTTP API */ }
 ```
 
 **理由**:
@@ -471,13 +471,13 @@ pub struct FirecrackerProvider { /* 生产 */ }
 - 请求级缓存(相同 prompt 命中)
 - 令牌桶限速 + 指数退避重试
 
-### ⚠️ R4: Firecracker Rust SDK 成熟度
+### ✅ R4: Firecracker Rust SDK 成熟度(已缓解)
 
 **风险**: `firec-rs` 等社区绑定可能滞后于 Firecracker 上游。
 
 **缓解**:
-- 评估 `firec-rs` 维护活跃度;若不满意,直接用 `reqwest` 调 Firecracker 的 REST API(协议简单稳定)
-- 在 `IsolationProvider` 后封装,SDK 可替换
+- 评估后放弃 `firec-rs`,直接调用 Firecracker REST API(`curl` 通过 Unix socket),协议稳定、可控、可替换
+- 在 `IsolationProvider` 后封装,后续若需换 SDK 只需改内部 HTTP 封装
 
 ### ⚠️ R5: 记忆污染与上下文爆炸
 
@@ -529,11 +529,14 @@ pub struct FirecrackerProvider { /* 生产 */ }
 - `axon-cli`: `axon memory init/list/forget/adjust/decay/search` 管理命令 + `run --goal` 接入统一配置
 - **验收**: `cargo test --workspace` 通过；记忆分层存储、召回、调节、遗忘、衰减、搜索均可经 CLI 操作
 
-### M3 — Firecracker 隔离 (Strong Isolation)
-- `axon-isolation`: `FirecrackerProvider` 实现
-- VM 生命周期、快照复用、资源限额
-- Linux CI 跑通 Firecracker 集成测试
-- **验收**: 任务在 microVM 内隔离执行,失败可丢弃不影响 host
+### M3 — Firecracker 隔离 (Strong Isolation) ✅ 已实现
+- `axon-isolation`: `FirecrackerProvider` 实现(直接调 Firecracker REST API;Windows 占位返回明确错误)
+- VM 生命周期(create/start/exec/destroy)、快照(create/restore)、资源限额(vCPU/内存/网络)
+- `axon-dispatcher`: VM 注册表 + 心跳跟踪 + 调度大脑复核
+- `axon-worker`: 周期性心跳上报
+- `axon-cli`: `axon vms` 查看运行中 VM
+- Linux CI 跑通 Firecracker 集成测试(见 `.github/workflows/ci.yml`)
+- **验收**: 任务在 microVM 内隔离执行,失败可丢弃不影响 host;`axon vms` 可查看 VM 状态
 
 ### M4 — 分布式 + Web Dashboard (Distributed & UI)
 - `axon-dispatcher`: NATS 跨节点调度

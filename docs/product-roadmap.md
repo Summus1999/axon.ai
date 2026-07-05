@@ -293,11 +293,12 @@
 - **状态**:已完成并提交
 - **依赖**:Qdrant、redb
 
-### v0.4 — M3 强隔离
-- **用户价值**:任务在 Firecracker microVM 中执行,生产级隔离
-- **关键 Stories**:S3.4.x(VM 生命周期/资源限额/快照)
-- **验收**:Linux 上 Firecracker 集成测试通过
+### v0.4 — M3 强隔离 ✅ 已完成(待验收)
+- **用户价值**:任务在 Firecracker microVM 中执行,生产级隔离;同时 Worker 心跳、调度大脑复核、`axon vms` 状态可查
+- **关键 Stories**:S3.4.x(VM 生命周期/资源限额/快照)、S4.4.1、S1.5.1、S5.1.4
+- **验收**:Linux 上 Firecracker 集成测试通过(GitHub Actions 已配置);本地 fmt/clippy/test 全过
 - **依赖**:Linux + KVM
+- **状态**:代码已完成并提交,等待用户 review
 
 ### v0.5 — M4 分布式 + Web
 - **用户价值**:多节点调度 + Web 仪表盘可视化监控
