@@ -232,12 +232,18 @@ impl FirecrackerProvider {
     }
 
     /// 带默认镜像创建 provider / create with default kernel/rootfs.
-    pub fn with_options(
-        binary: impl Into<PathBuf>,
-        kernel: Option<impl Into<PathBuf>>,
-        rootfs: Option<impl Into<PathBuf>>,
-        workdir_root: Option<impl Into<PathBuf>>,
-    ) -> Self {
+    pub fn with_options<B, K, R, W>(
+        binary: B,
+        kernel: Option<K>,
+        rootfs: Option<R>,
+        workdir_root: Option<W>,
+    ) -> Self
+    where
+        B: Into<PathBuf>,
+        K: Into<PathBuf>,
+        R: Into<PathBuf>,
+        W: Into<PathBuf>,
+    {
         let workdir_root = workdir_root
             .map(Into::into)
             .unwrap_or_else(|| PathBuf::from(".axon/firecracker"));
