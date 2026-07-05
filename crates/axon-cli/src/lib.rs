@@ -70,6 +70,7 @@ async fn create_hybrid_memory_store_from_config(
 ///
 /// `workspace_dir` 会挂载到容器内的 `/workspace`;`image` 为容器镜像。
 /// 返回每个任务的执行结果,便于测试断言。
+#[tracing::instrument(fields(%goal, %image))]
 pub async fn run_goal(
     goal: &str,
     workspace_dir: &Path,
@@ -255,6 +256,7 @@ fn generate_task_id() -> String {
 ///
 /// `goal` 会被直接作为任务标题与描述;`nats_url` 用于任务投递与结果订阅;
 /// `dispatcher_url` 当前保留给未来 HTTP 状态查询,本函数暂未使用。
+#[tracing::instrument(fields(%goal, nats_url))]
 pub async fn run_remote(
     goal: &str,
     nats_url: &str,
@@ -267,6 +269,7 @@ pub async fn run_remote(
 /// 使用给定队列提交远程任务并等待结果 / submit a remote task using the provided queue.
 ///
 /// 将底层队列实现与 CLI 流程解耦,便于单元测试使用内存队列。
+#[tracing::instrument(skip(queue), fields(%goal))]
 async fn run_remote_with_queue(
     goal: &str,
     queue: Arc<dyn TaskQueue>,
@@ -277,6 +280,7 @@ async fn run_remote_with_queue(
 /// 使用给定队列与指定任务 id 提交远程任务并等待结果 / submit a remote task with explicit id.
 ///
 /// `timeout_dur` 控制等待结果的最大时长,便于测试使用较短超时。
+#[tracing::instrument(skip(queue), fields(%goal, %task_id))]
 async fn run_remote_with_queue_and_id(
     goal: &str,
     queue: Arc<dyn TaskQueue>,
@@ -314,6 +318,7 @@ async fn run_remote_with_queue_and_id(
 }
 
 /// 从远程 dispatcher 查询任务列表 / list remote tasks from the dispatcher HTTP API.
+#[tracing::instrument(fields(dispatcher_url))]
 pub async fn list_remote_tasks(dispatcher_url: &str) -> anyhow::Result<Vec<RemoteTaskRecord>> {
     let url = format!("{dispatcher_url}/tasks");
     let records: Vec<RemoteTaskRecord> = reqwest::get(&url).await?.json().await?;
@@ -321,6 +326,7 @@ pub async fn list_remote_tasks(dispatcher_url: &str) -> anyhow::Result<Vec<Remot
 }
 
 /// 从远程 dispatcher 查询 worker 列表 / list remote workers from the dispatcher HTTP API.
+#[tracing::instrument(fields(dispatcher_url))]
 pub async fn list_remote_workers(dispatcher_url: &str) -> anyhow::Result<Vec<RemoteWorkerRecord>> {
     let url = format!("{dispatcher_url}/workers");
     let records: Vec<RemoteWorkerRecord> = reqwest::get(&url).await?.json().await?;

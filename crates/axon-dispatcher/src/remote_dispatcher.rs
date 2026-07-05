@@ -116,6 +116,7 @@ impl RemoteDispatcher {
     }
 
     /// 提交任务到队列 / submit a task to the queue.
+    #[tracing::instrument(skip(self, task), fields(%task.id))]
     pub async fn submit_task(&self, task: Task) -> AxonResult<()> {
         let mut tasks = self.state.tasks.write().await;
         tasks.insert(
@@ -136,6 +137,7 @@ impl RemoteDispatcher {
     }
 
     /// 运行 dispatcher：启动结果/心跳/事件聚合，并提供 HTTP API / run the dispatcher.
+    #[tracing::instrument(skip(self), fields(%http_addr))]
     pub async fn run(&self, http_addr: SocketAddr) -> AxonResult<()> {
         let results_handle = tokio::spawn(self.clone().collect_results());
         let heartbeats_handle = tokio::spawn(self.clone().collect_heartbeats());
@@ -161,6 +163,7 @@ impl RemoteDispatcher {
     }
 
     /// 聚合任务结果 / collect task results from the queue.
+    #[tracing::instrument(skip(self), fields(dispatcher = true))]
     async fn collect_results(self) -> AxonResult<()> {
         let mut stream = self
             .state
@@ -195,6 +198,7 @@ impl RemoteDispatcher {
     }
 
     /// 聚合 worker 心跳 / collect worker heartbeats.
+    #[tracing::instrument(skip(self), fields(dispatcher = true))]
     async fn collect_heartbeats(self) -> AxonResult<()> {
         let mut stream = self.state.queue.subscribe_heartbeats().await?;
         while let Some(beat) = stream.next().await {
@@ -229,6 +233,7 @@ impl RemoteDispatcher {
     }
 
     /// 聚合 worker 生命周期事件 / collect worker lifecycle events.
+    #[tracing::instrument(skip(self), fields(dispatcher = true))]
     async fn collect_worker_events(self) -> AxonResult<()> {
         let mut stream = self.state.queue.subscribe_worker_events().await?;
         while let Some(event) = stream.next().await {

@@ -66,6 +66,7 @@ impl CommandAgent {
 
 #[async_trait]
 impl Agent for CommandAgent {
+    #[tracing::instrument(skip(self, task, llm, memory), fields(%task.id))]
     async fn execute(
         &self,
         task: &Task,

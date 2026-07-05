@@ -40,6 +40,7 @@ impl DashboardState {
     }
 
     /// 应用 dispatcher 事件并广播给浏览器 / apply a dispatcher event and broadcast it.
+    #[tracing::instrument(skip(self, event))]
     pub async fn apply_dispatch_event(&self, event: DispatchEvent) {
         let broadcast_event = DashboardEvent::from(event.clone());
         match event {
@@ -135,6 +136,7 @@ impl Dashboard {
     }
 
     /// 启动 dashboard：同步 dispatcher 状态并提供 HTTP/WebSocket 服务 / run the dashboard.
+    #[tracing::instrument(skip(self), fields(%self.dispatcher_url, %self.bind_addr))]
     pub async fn run(&self) -> anyhow::Result<()> {
         let sync_handle = tokio::spawn(sync_from_dispatcher(
             self.state.clone(),
@@ -162,6 +164,7 @@ impl Dashboard {
 }
 
 /// 持续同步 dispatcher 状态 / continuously sync state from the remote dispatcher.
+#[tracing::instrument(skip(state), fields(%dispatcher_url))]
 async fn sync_from_dispatcher(state: Arc<DashboardState>, dispatcher_url: String) {
     loop {
         if let Err(e) = sync_once(&state, &dispatcher_url).await {
@@ -172,6 +175,7 @@ async fn sync_from_dispatcher(state: Arc<DashboardState>, dispatcher_url: String
 }
 
 /// 单次同步：拉取初始状态并订阅 WebSocket / perform one sync attempt.
+#[tracing::instrument(skip(state), fields(%dispatcher_url))]
 async fn sync_once(state: &Arc<DashboardState>, dispatcher_url: &str) -> anyhow::Result<()> {
     // 拉取初始任务与 worker 列表。
     let tasks: Vec<TaskRecord> = reqwest::get(format!("{dispatcher_url}/tasks"))

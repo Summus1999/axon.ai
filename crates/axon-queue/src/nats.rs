@@ -71,6 +71,7 @@ impl NatsQueue {
 
 #[async_trait]
 impl TaskQueue for NatsQueue {
+    #[tracing::instrument(skip(self, task), fields(%task.id))]
     async fn submit(&self, task: Task) -> Result<()> {
         let payload = Self::serialize(&task)?;
         self.client
@@ -80,6 +81,7 @@ impl TaskQueue for NatsQueue {
         Ok(())
     }
 
+    #[tracing::instrument(skip(self))]
     async fn pull(&self, to: Duration) -> Result<Option<Task>> {
         let mut sub = self
             .client
@@ -99,6 +101,7 @@ impl TaskQueue for NatsQueue {
         }
     }
 
+    #[tracing::instrument(skip(self, result), fields(%result.task_id))]
     async fn complete(&self, result: RemoteTaskResult) -> Result<()> {
         let subject = format!("{}{}", subjects::RESULTS_PREFIX, result.task_id);
         let payload = Self::serialize(&result)?;
@@ -109,6 +112,7 @@ impl TaskQueue for NatsQueue {
         Ok(())
     }
 
+    #[tracing::instrument(skip(self))]
     async fn subscribe_results(&self, filter: ResultFilter) -> Result<ResultStream> {
         let subject = match filter {
             ResultFilter::All => subjects::RESULTS_WILDCARD.to_string(),
@@ -134,6 +138,7 @@ impl TaskQueue for NatsQueue {
         Ok(Box::pin(stream))
     }
 
+    #[tracing::instrument(skip(self, beat), fields(%beat.worker_id))]
     async fn heartbeat(&self, beat: Heartbeat) -> Result<()> {
         let payload = Self::serialize(&beat)?;
         self.client
@@ -143,6 +148,7 @@ impl TaskQueue for NatsQueue {
         Ok(())
     }
 
+    #[tracing::instrument(skip(self))]
     async fn subscribe_heartbeats(&self) -> Result<HeartbeatStream> {
         let sub = self
             .client
@@ -158,6 +164,7 @@ impl TaskQueue for NatsQueue {
         Ok(Box::pin(stream))
     }
 
+    #[tracing::instrument(skip(self, event))]
     async fn worker_event(&self, event: WorkerEvent) -> Result<()> {
         let payload = Self::serialize(&event)?;
         self.client
@@ -167,6 +174,7 @@ impl TaskQueue for NatsQueue {
         Ok(())
     }
 
+    #[tracing::instrument(skip(self))]
     async fn subscribe_worker_events(
         &self,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<WorkerEvent>> + Send>>> {

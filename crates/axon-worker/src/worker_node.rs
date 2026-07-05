@@ -81,6 +81,7 @@ impl WorkerNode {
     }
 
     /// 运行 worker 节点 / run the worker node until shutdown signal.
+    #[tracing::instrument(skip(self, shutdown), fields(worker_id = %self.config.worker_id))]
     pub async fn run(&self, shutdown: tokio::sync::watch::Receiver<bool>) -> axon_core::Result<()> {
         self.register().await?;
 
@@ -198,6 +199,7 @@ impl WorkerNode {
     }
 
     /// 执行单个任务 / execute a single task.
+    #[tracing::instrument(skip(self, task), fields(%task.id))]
     async fn execute_task(&self, task: &Task) -> axon_core::Result<crate::WorkReport> {
         let agent_output = self.agent.execute(task, &*self.llm, &*self.memory).await?;
 

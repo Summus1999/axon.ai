@@ -54,6 +54,7 @@ impl InProcessQueue {
 
 #[async_trait]
 impl TaskQueue for InProcessQueue {
+    #[tracing::instrument(skip(self, task), fields(%task.id))]
     async fn submit(&self, task: Task) -> Result<()> {
         self.task_sender
             .send(task)
@@ -62,6 +63,7 @@ impl TaskQueue for InProcessQueue {
         Ok(())
     }
 
+    #[tracing::instrument(skip(self))]
     async fn pull(&self, to: Duration) -> Result<Option<Task>> {
         let mut rx = self.tasks.lock().await;
         match timeout(to, rx.recv()).await {
@@ -71,11 +73,13 @@ impl TaskQueue for InProcessQueue {
         }
     }
 
+    #[tracing::instrument(skip(self, result), fields(%result.task_id))]
     async fn complete(&self, result: RemoteTaskResult) -> Result<()> {
         let _ = self.result_sender.send(result);
         Ok(())
     }
 
+    #[tracing::instrument(skip(self))]
     async fn subscribe_results(&self, _filter: ResultFilter) -> Result<ResultStream> {
         let rx = self.result_sender.subscribe();
         Ok(Box::pin(BroadcastStream::new(rx).map(|res| match res {
@@ -84,11 +88,13 @@ impl TaskQueue for InProcessQueue {
         })))
     }
 
+    #[tracing::instrument(skip(self, beat), fields(%beat.worker_id))]
     async fn heartbeat(&self, beat: Heartbeat) -> Result<()> {
         let _ = self.heartbeat_sender.send(beat);
         Ok(())
     }
 
+    #[tracing::instrument(skip(self))]
     async fn subscribe_heartbeats(&self) -> Result<HeartbeatStream> {
         let rx = self.heartbeat_sender.subscribe();
         Ok(Box::pin(BroadcastStream::new(rx).map(|res| match res {
@@ -97,11 +103,13 @@ impl TaskQueue for InProcessQueue {
         })))
     }
 
+    #[tracing::instrument(skip(self, event))]
     async fn worker_event(&self, event: WorkerEvent) -> Result<()> {
         let _ = self.worker_event_sender.send(event);
         Ok(())
     }
 
+    #[tracing::instrument(skip(self))]
     async fn subscribe_worker_events(
         &self,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<WorkerEvent>> + Send>>> {

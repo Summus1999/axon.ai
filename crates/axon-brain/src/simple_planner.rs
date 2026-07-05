@@ -25,6 +25,7 @@ impl SimplePlanner {
 
 #[async_trait]
 impl Planner for SimplePlanner {
+    #[tracing::instrument(skip(self, memory, _llm), fields(%goal.description))]
     async fn plan(
         &self,
         goal: &Goal,
