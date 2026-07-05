@@ -8,10 +8,20 @@
 
 pub mod docker;
 
+#[cfg(unix)]
+pub mod firecracker;
+#[cfg(unix)]
+pub use firecracker::FirecrackerProvider;
+
+#[cfg(windows)]
+pub mod placeholder;
+#[cfg(windows)]
+pub use placeholder::FirecrackerProvider;
+
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use axon_core::{Error, Result, VmId};
+use axon_core::{Result, VmId};
 
 pub use docker::DockerProvider;
 
@@ -95,34 +105,4 @@ pub trait IsolationProvider: Send + Sync {
 
     /// 销毁 VM / destroy the VM, releasing all resources.
     async fn destroy(&self, vm: VmHandle) -> Result<()>;
-}
-
-/// 占位 Firecracker provider / placeholder Firecracker backend.
-pub struct FirecrackerProvider;
-
-#[async_trait]
-impl IsolationProvider for FirecrackerProvider {
-    fn backend(&self) -> Backend {
-        Backend::Firecracker
-    }
-    async fn create_vm(&self, _spec: VmSpec) -> Result<VmHandle> {
-        Err(Error::Isolation(
-            "FirecrackerProvider not yet implemented (skeleton, M3)".into(),
-        ))
-    }
-    async fn exec(&self, _vm: &VmHandle, _cmd: Command) -> Result<ExecOutput> {
-        Err(Error::Isolation(
-            "FirecrackerProvider not yet implemented (skeleton, M3)".into(),
-        ))
-    }
-    async fn snapshot(&self, _vm: &VmHandle) -> Result<Snapshot> {
-        Err(Error::Isolation(
-            "FirecrackerProvider not yet implemented (skeleton, M3)".into(),
-        ))
-    }
-    async fn destroy(&self, _vm: VmHandle) -> Result<()> {
-        Err(Error::Isolation(
-            "FirecrackerProvider not yet implemented (skeleton, M3)".into(),
-        ))
-    }
 }

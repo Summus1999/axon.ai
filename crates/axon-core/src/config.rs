@@ -102,6 +102,21 @@ pub struct IsolationConfig {
     /// 隔离后端: `docker` | `firecracker`。
     #[serde(default = "default_isolation_backend")]
     pub backend: String,
+    /// Firecracker 可执行文件路径 / path to the firecracker binary.
+    #[serde(default)]
+    pub firecracker_binary: Option<String>,
+    /// Firecracker jailer 可执行文件路径(可选)/ path to the jailer binary.
+    #[serde(default)]
+    pub jailer_binary: Option<String>,
+    /// 默认内核镜像(vmlinux)路径 / path to the default kernel image.
+    #[serde(default)]
+    pub kernel_image: Option<String>,
+    /// 默认 rootfs 镜像路径 / path to the default rootfs image.
+    #[serde(default)]
+    pub rootfs_image: Option<String>,
+    /// 快照存储目录 / directory for VM snapshots.
+    #[serde(default)]
+    pub snapshot_dir: Option<String>,
 }
 
 fn default_isolation_backend() -> String {
@@ -112,6 +127,11 @@ impl Default for IsolationConfig {
     fn default() -> Self {
         Self {
             backend: default_isolation_backend(),
+            firecracker_binary: None,
+            jailer_binary: None,
+            kernel_image: None,
+            rootfs_image: None,
+            snapshot_dir: None,
         }
     }
 }
@@ -361,5 +381,101 @@ default_provider = "openai"
         std::env::remove_var("AXON_MEMORY__QDRANT_URL");
         std::env::remove_var("AXON_MEMORY__KV_PATH");
         std::env::remove_var("AXON_MEMORY__QDRANT_COLLECTION");
+    }
+
+    /// `IsolationConfig` 新增 Firecracker 相关字段默认均为 None。
+    #[test]
+    fn isolation_config_defaults_for_firecracker() {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        clear_axon_env();
+
+        let cfg = Config::load_with_paths("/nonexistent.toml", "/nonexistent.env").unwrap();
+        assert_eq!(cfg.isolation.backend, "docker");
+        assert!(cfg.isolation.firecracker_binary.is_none());
+        assert!(cfg.isolation.jailer_binary.is_none());
+        assert!(cfg.isolation.kernel_image.is_none());
+        assert!(cfg.isolation.rootfs_image.is_none());
+        assert!(cfg.isolation.snapshot_dir.is_none());
+    }
+
+    /// TOML 可覆盖 Firecracker 相关路径配置。
+    #[test]
+    fn toml_overrides_firecracker_paths() {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        clear_axon_env();
+
+        let toml = temp_file(
+            "firecracker",
+            r#"
+[isolation]
+backend = "firecracker"
+firecracker_binary = "/usr/bin/firecracker"
+jailer_binary = "/usr/bin/jailer"
+kernel_image = "/var/lib/axon/vmlinux"
+rootfs_image = "/var/lib/axon/rootfs.ext4"
+snapshot_dir = "/var/lib/axon/snapshots"
+"#,
+        );
+
+        let cfg = Config::load_with_paths(&toml, "/nonexistent.env").unwrap();
+        assert_eq!(cfg.isolation.backend, "firecracker");
+        assert_eq!(
+            cfg.isolation.firecracker_binary.as_deref(),
+            Some("/usr/bin/firecracker")
+        );
+        assert_eq!(
+            cfg.isolation.jailer_binary.as_deref(),
+            Some("/usr/bin/jailer")
+        );
+        assert_eq!(
+            cfg.isolation.kernel_image.as_deref(),
+            Some("/var/lib/axon/vmlinux")
+        );
+        assert_eq!(
+            cfg.isolation.rootfs_image.as_deref(),
+            Some("/var/lib/axon/rootfs.ext4")
+        );
+        assert_eq!(
+            cfg.isolation.snapshot_dir.as_deref(),
+            Some("/var/lib/axon/snapshots")
+        );
+    }
+
+    /// 环境变量可覆盖 Firecracker 相关路径配置。
+    #[test]
+    fn env_overrides_firecracker_paths() {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        clear_axon_env();
+
+        let toml = temp_file(
+            "firecracker",
+            r#"
+[isolation]
+backend = "docker"
+firecracker_binary = "/usr/bin/firecracker"
+"#,
+        );
+        std::env::set_var("AXON_ISOLATION__BACKEND", "firecracker");
+        std::env::set_var("AXON_ISOLATION__KERNEL_IMAGE", "/opt/axon/vmlinux");
+        std::env::set_var("AXON_ISOLATION__ROOTFS_IMAGE", "/opt/axon/rootfs.ext4");
+
+        let cfg = Config::load_with_paths(&toml, "/nonexistent.env").unwrap();
+        assert_eq!(cfg.isolation.backend, "firecracker");
+        assert_eq!(
+            cfg.isolation.firecracker_binary.as_deref(),
+            Some("/usr/bin/firecracker")
+        );
+        assert_eq!(
+            cfg.isolation.kernel_image.as_deref(),
+            Some("/opt/axon/vmlinux")
+        );
+        assert_eq!(
+            cfg.isolation.rootfs_image.as_deref(),
+            Some("/opt/axon/rootfs.ext4")
+        );
+
+        std::env::remove_var("AXON_ISOLATION__BACKEND");
+        std::env::remove_var("AXON_ISOLATION__KERNEL_IMAGE");
+        std::env::remove_var("AXON_ISOLATION__ROOTFS_IMAGE");
     }
 }

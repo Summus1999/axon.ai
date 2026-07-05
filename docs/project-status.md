@@ -16,8 +16,9 @@
 5. [当前进度快照 / Current Snapshot](#5-当前进度快照--current-snapshot)
 6. [M1 任务分解 / M1 Breakdown](#6-m1-任务分解--m1-breakdown)
 7. [M2 任务分解 / M2 Breakdown](#7-m2-任务分解--m2-breakdown)
-8. [风险与阻塞登记 / Risk & Blocker Log](#8-风险与阻塞登记--risk--blocker-log)
-9. [文档维护规则 / Maintenance Rules](#9-文档维护规则--maintenance-rules)
+8. [M3 任务分解 / M3 Breakdown](#8-m3-任务分解--m3-breakdown)
+9. [风险与阻塞登记 / Risk & Blocker Log](#9-风险与阻塞登记--risk--blocker-log)
+10. [文档维护规则 / Maintenance Rules](#10-文档维护规则--maintenance-rules)
 
 ---
 
@@ -76,7 +77,7 @@
 | **M0** | v0.1 | 骨架:workspace + trait 占位 + 文档 | √ | 2026-07-04 |
 | **M1** | v0.2 | 单机 MVP:CLI + OpenAI/DeepSeek + Docker 隔离 + 自检 | √ | 2026-07-04 |
 | **M2** | v0.3 | 记忆系统:Qdrant + redb + 用户画像 + 记忆管理 | √ | 2026-07-04 |
-| **M3** | v0.4 | Firecracker 强隔离 + VM 生命周期 + 快照 | × | — |
+| **M3** | v0.4 | Firecracker 强隔离 + VM 生命周期 + 快照 | ○ | — |
 | **M4** | v0.5 | 分布式(NATS)+ Web 仪表盘 + 可观测性 | × | — |
 | **M5** | v0.6+ | 高级:多步 DAG + ReAct + 多 agent + 成本监控 | × | — |
 
@@ -160,7 +161,7 @@
 M0  √  100%  已完成
 M1  √  100%  已验收
 M2  √  100%  已完成
-M3  ×    0%  未做
+M3  ○    0%  进行中
 M4  ×    0%  未做
 M5  ×    0%  未做
 ```
@@ -276,13 +277,64 @@ M2-T1(文档对齐)──► M2-T2(配置统一)──► M2-T3(GLM embedding)
 - √ `axon memory list/forget/adjust` 命令可用
 - √ 偏好错误时可修正
 - √ M2 全部门禁(fmt/clippy/test)通过
-- ○ 用户 review 通过(等待用户确认)
+- √ 用户 review 通过
 
 ---
 
-## 8. 风险与阻塞登记 / Risk & Blocker Log
+## 8. M3 任务分解 / M3 Breakdown
 
-### 8.1 风险登记册(长期)
+> M3 目标:实现 Firecracker microVM 强隔离,支持 VM 生命周期管理、资源限额与快照恢复。
+> 任务 ID 对齐 [product-roadmap.md §4](./product-roadmap.md#4-需求拆解--requirements-breakdown)。
+
+### 8.1 任务看板
+
+| ID | 任务 | 状态 | 关联 |
+|----|------|------|------|
+| **M3-T1** | 扩展 `IsolationConfig` 与 `VmSpec`(Firecracker 路径/内核/rootfs/快照目录) | √ | — |
+| **M3-T2** | Firecracker REST API 封装(spawn 进程 + socket + HTTP client) | √ | — |
+| **M3-T3** | VM 生命周期:create/start/exec/destroy microVM | ○ | — |
+| **M3-T4** | 快照创建与恢复 | × | — |
+| **M3-T5** | DockerProvider 资源限额补全(CPU/内存/网络) | × | — |
+| **M3-T6** | Worker 心跳上报 | × | — |
+| **M3-T7** | 调度大脑复核 Reviewer | × | — |
+| **M3-T8** | `axon vms` CLI + VM 状态跟踪 | × | — |
+| **M3-T9** | Linux CI Firecracker 集成测试 | × | — |
+| **M3-T10** | 文档同步、验收与用户 review | × | — |
+
+> 状态符号:`×` 未做 / `○` 当前进度点(全文档唯一)/ `√` 已完成。当前 `○` 落在 **M3-T1**。
+
+### 8.2 建议执行顺序(依赖关系)
+
+```
+M3-T1(配置扩展)──► M3-T2(REST API 封装)──► M3-T3(VM 生命周期)
+                                                  │
+                       M3-T4(快照) ◄───────────────┤
+                       M3-T5(Docker 资源限额) ◄────┘
+                       M3-T6(Worker 心跳)
+                       M3-T7(调度大脑复核)
+                       M3-T8(axons vms CLI)
+                       M3-T9(Linux CI 集成测试)
+                       M3-T10(验收)
+```
+
+### 8.3 M3 验收标准(端到端)
+
+- × `IsolationConfig` 支持 firecracker 相关路径配置并解析通过。
+- × `FirecrackerProvider` 在 Linux 上能启动 microVM、执行命令、销毁 VM。
+- × `FirecrackerProvider` 支持快照创建与恢复。
+- × `DockerProvider` 正确应用 CPU/内存/网络限制。
+- × Worker 心跳在任务执行期间周期性上报。
+- × 调度大脑能对 worker 产出进行复核。
+- × `axon vms` 能列出当前运行中的 VM。
+- × Linux CI 跑通 Firecracker 集成测试。
+- × M3 全部门禁(fmt/clippy/test)通过。
+- × 用户 review 通过。
+
+---
+
+## 9. 风险与阻塞登记 / Risk & Blocker Log
+
+### 9.1 风险登记册(长期)
 
 | ID | 风险 | 影响 | 概率 | 缓解 | 状态 |
 |----|------|------|------|------|------|
@@ -294,7 +346,7 @@ M2-T1(文档对齐)──► M2-T2(配置统一)──► M2-T3(GLM embedding)
 
 > 技术风险详情见 [tech-stack.md §5](./tech-stack.md#5-risk--mitigation--风险与缓解)。
 
-### 8.2 阻塞事项(当前)
+### 9.2 阻塞事项(当前)
 
 | 日期 | 任务 | 阻塞原因 | 需要的输入 | 状态 |
 |------|------|---------|-----------|------|
@@ -302,26 +354,26 @@ M2-T1(文档对齐)──► M2-T2(配置统一)──► M2-T3(GLM embedding)
 
 ---
 
-## 9. 文档维护规则 / Maintenance Rules
+## 10. 文档维护规则 / Maintenance Rules
 
-### 9.1 谁更新 / When to Update
+### 10.1 谁更新 / When to Update
 
 | 事件 | 更新内容 | 责任 |
 |------|---------|------|
 | 任务状态变更 | §6/§7 看板状态 + 关联 commit | AI agent(执行后立即) |
-| 遇阻塞 | §8.2 登记 + 任务标 Blocked | AI agent / 人类 |
+| 遇阻塞 | §9.2 登记 + 任务标 Blocked | AI agent / 人类 |
 | 提交代码 | 关联 commit hash 到对应任务 | AI agent |
 | 里程碑完成 | §2 状态 + §5 快照 + §4.2 DoD 勾选 | AI agent(草拟)+ 人类(review) |
 | 新增/调整需求 | product-roadmap 对应表 + 本文档任务 | 评审后 |
 
-### 9.2 真实性要求
+### 10.2 真实性要求
 
 - 状态必须反映**实际**情况:未开始就是 Todo,不许虚标 In Progress 或 Done。
 - Done 必须有 commit + 测试通过证据,不许"我觉得写完了"就标 Done。
 - 阻塞必须如实登记,不许隐瞒。
 - 进度快照的百分比基于任务数,不含水分。
 
-### 9.3 与其他文档的关系
+### 10.3 与其他文档的关系
 
 ```
 product-roadmap.md  ──定义做什么──►  project-status.md(本文)

@@ -72,6 +72,9 @@ base64 = "0.22"
 # 集成测试容器 / integration test containers
 testcontainers = "0.23"
 
+# 临时目录 / temp directories for tests
+tempfile = "3"
+
 # CLI
 clap = { version = "4", features = ["derive"] }
 
