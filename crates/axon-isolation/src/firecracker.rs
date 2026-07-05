@@ -102,24 +102,10 @@ impl FirecrackerClient for CurlClient {
     }
 }
 
-/// Firecracker 进程句柄 / a running Firecracker process.
-#[derive(Debug)]
-struct FcProcess {
-    /// API socket 路径 / path to the API unix socket.
-    socket: PathBuf,
-    /// 工作目录(存放 socket、pid、日志)/ working directory for this VM.
-    workdir: PathBuf,
-    /// 子进程 id / child process id.
-    pid: u32,
-}
-
-/// 单个 VM 实例状态 / internal state for one microVM.
-struct VmInstance {
-    handle: VmHandle,
-    process: FcProcess,
-    /// guest 中执行命令的后端 / backend used to run commands inside the guest.
-    exec_backend: Arc<dyn ExecBackend>,
-}
+// 设计说明:原计划用 `FcProcess`/`VmInstance` 维护 VM 注册表(pid/socket/workdir),
+// 但 M3 的 `destroy`/`snapshot` 改为通过 `workdir_root.join(vm.id)` 推导路径,无需
+// 持有进程句柄。按 YAGNI(AGENTS.md §1.1)移除这两个未构造的类型;若 M4 分布式
+// 需要跨节点 VM 注册表,再重新引入。
 
 /// 在 guest 中执行命令的后端抽象 / backend for command execution inside a microVM.
 #[async_trait]
@@ -131,7 +117,7 @@ trait ExecBackend: Send + Sync {
 /// 通过 SSH 在 guest 中执行命令 / SSH-based command execution.
 ///
 /// 要求 guest rootfs 已启动 sshd,且 host 已通过 tap/bridge 等方式与 guest 网络可达。
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct SshExecBackend;
 
 #[async_trait]
@@ -205,6 +191,11 @@ impl ExecBackend for SshExecBackend {
     }
 }
 
+/// HTTP client 工厂类型 / factory closure that builds a client for a given API socket.
+///
+/// 提取为 type alias 以避免 clippy `type_complexity`(原 `Arc<dyn Fn(&Path) -> Arc<dyn ...> + Send + Sync>` 过于复杂)。
+type ClientFactory = Arc<dyn Fn(&Path) -> Arc<dyn FirecrackerClient> + Send + Sync>;
+
 /// Firecracker 隔离 provider / Firecracker isolation provider.
 pub struct FirecrackerProvider {
     /// firecracker 可执行文件路径 / path to the firecracker binary.
@@ -216,7 +207,7 @@ pub struct FirecrackerProvider {
     /// VM 工作目录根(每个 VM 会创建子目录)/ root directory for per-VM working dirs.
     workdir_root: PathBuf,
     /// HTTP client 工厂(便于测试注入 mock)/ factory for API clients.
-    client_factory: Arc<dyn Fn(&Path) -> Arc<dyn FirecrackerClient> + Send + Sync>,
+    client_factory: ClientFactory,
     /// exec 后端 / command execution backend.
     exec_backend: Arc<dyn ExecBackend>,
 }
@@ -262,7 +253,7 @@ impl FirecrackerProvider {
             rootfs: rootfs.map(Into::into),
             workdir_root,
             client_factory: Arc::new(|socket| Arc::new(CurlClient::new(socket))),
-            exec_backend: Arc::new(SshExecBackend::default()),
+            exec_backend: Arc::new(SshExecBackend),
         }
     }
 
@@ -502,7 +493,7 @@ mod tests {
             rootfs: Some(PathBuf::from("/fake/rootfs.ext4")),
             workdir_root: workdir,
             client_factory: Arc::new(move |_| client.clone() as Arc<dyn FirecrackerClient>),
-            exec_backend: Arc::new(SshExecBackend::default()),
+            exec_backend: Arc::new(SshExecBackend),
         }
     }
 
