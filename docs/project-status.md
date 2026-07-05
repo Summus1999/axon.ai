@@ -290,9 +290,9 @@ M2-T1(文档对齐)──► M2-T2(配置统一)──► M2-T3(GLM embedding)
 
 | ID | 任务 | 状态 | 关联 |
 |----|------|------|------|
-| **M3-T1** | 扩展 `IsolationConfig` 与 `VmSpec`(Firecracker 路径/内核/rootfs/快照目录) | √ | — |
-| **M3-T2** | Firecracker REST API 封装(spawn 进程 + socket + HTTP client) | √ | — |
-| **M3-T3** | VM 生命周期:create/start/exec/destroy microVM | ○ | — |
+| **M3-T1** | 扩展 `IsolationConfig` 与 `VmSpec`(Firecracker 路径/内核/rootfs/快照目录) | √ | `9649e87` |
+| **M3-T2** | Firecracker REST API 封装(spawn 进程 + socket + HTTP client) | √ | `9649e87` |
+| **M3-T3** | VM 生命周期:create/start/exec/destroy microVM | ○ | `9649e87` |
 | **M3-T4** | 快照创建与恢复 | × | — |
 | **M3-T5** | DockerProvider 资源限额补全(CPU/内存/网络) | × | — |
 | **M3-T6** | Worker 心跳上报 | × | — |
