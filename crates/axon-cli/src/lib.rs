@@ -9,7 +9,10 @@ use std::sync::Arc;
 
 use axon_brain::{CommandAgent, Goal, Planner, SimplePlanner};
 use axon_core::Config;
-use axon_dispatcher::{InProcessQueue, Scheduler, SchedulerConfig, SimpleScheduler, TaskResult};
+use axon_dispatcher::{
+    vm_registry::InMemoryVmRegistry, InProcessQueue, Scheduler, SchedulerConfig, SimpleScheduler,
+    TaskResult,
+};
 use axon_isolation::{DockerProvider, VmSpec};
 use axon_memory::{HybridMemoryStore, InMemoryStore, MemoryStore, QdrantStore, RedbStore};
 use serde::{Deserialize, Serialize};
@@ -92,13 +95,16 @@ pub async fn run_goal(
     let queue = Arc::new(InProcessQueue::new());
     let isolation = Arc::new(DockerProvider::new());
     let agent = Arc::new(CommandAgent::new());
-    let scheduler = SimpleScheduler::new(
+    let vm_registry = Arc::new(InMemoryVmRegistry::with_snapshot(vm_records_path()));
+    let scheduler = SimpleScheduler::with_options(
         queue,
         isolation,
         agent,
         llm,
         memory,
         Some(Arc::new(axon_brain::LlmProfileExtractor::new())),
+        None::<Arc<dyn axon_brain::Reviewer>>,
+        Some(vm_registry),
         SchedulerConfig {
             max_concurrency: 1,
             task_timeout_secs: 600,
@@ -129,6 +135,21 @@ pub async fn run_goal(
     save_task_records(&results)?;
 
     Ok(results)
+}
+
+/// VM 状态记录 / persisted VM status record.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VmRecord {
+    /// VM id / vm id.
+    pub vm_id: String,
+    /// 隔离后端 / isolation backend.
+    pub backend: String,
+    /// 当前任务 id / current task id.
+    pub task_id: String,
+    /// 创建时间(Unix 秒)/ created at.
+    pub created_at: u64,
+    /// 最新心跳时间(Unix 毫秒)/ latest heartbeat timestamp.
+    pub last_heartbeat_ms: Option<u64>,
 }
 
 /// 任务状态记录 / persisted task status record.
@@ -170,6 +191,25 @@ impl TaskRecord {
 /// 任务记录默认存储路径 / default task records path.
 pub fn task_records_path() -> PathBuf {
     PathBuf::from(".axon/tasks.json")
+}
+
+/// VM 记录默认存储路径 / default VM records path.
+pub fn vm_records_path() -> PathBuf {
+    PathBuf::from(".axon/vms.json")
+}
+
+/// 从本地文件加载 VM 记录 / load VM records from local file.
+///
+/// 若文件不存在则返回空列表。
+pub fn list_vms() -> anyhow::Result<Vec<VmRecord>> {
+    let path = vm_records_path();
+    if !path.is_file() {
+        return Ok(vec![]);
+    }
+
+    let content = fs::read_to_string(&path)?;
+    let records: Vec<VmRecord> = serde_json::from_str(&content)?;
+    Ok(records)
 }
 
 /// 保存任务记录到本地文件 / persist task records to local file.
@@ -308,5 +348,49 @@ mod tests {
             result.is_err(),
             "hybrid backend should fail when no embedder is available"
         );
+    }
+
+    /// VM 记录文件不存在时,`list_vms` 返回空列表。
+    #[test]
+    fn list_vms_returns_empty_when_missing() {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let original = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&tmp).unwrap();
+
+        let records = list_vms().unwrap();
+        assert!(records.is_empty());
+
+        std::env::set_current_dir(original).unwrap();
+    }
+
+    /// VM 记录可保存并重新加载。
+    #[test]
+    fn save_and_load_vm_records_roundtrip() {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let original = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&tmp).unwrap();
+
+        let records = vec![VmRecord {
+            vm_id: "vm-1".into(),
+            backend: "docker".into(),
+            task_id: "t1".into(),
+            created_at: 1000,
+            last_heartbeat_ms: Some(2000),
+        }];
+        let path = vm_records_path();
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        let json = serde_json::to_string_pretty(&records).unwrap();
+        fs::write(path, json).unwrap();
+
+        let loaded = list_vms().unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].vm_id, "vm-1");
+        assert_eq!(loaded[0].backend, "docker");
+
+        std::env::set_current_dir(original).unwrap();
     }
 }

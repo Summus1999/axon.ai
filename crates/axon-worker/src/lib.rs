@@ -5,11 +5,20 @@
 //!
 //! 具体实现(M1)使用 `axon-brain::Agent`。
 
+pub mod heartbeat;
+
+use std::sync::Arc;
+use std::time::Duration;
+
 use axon_brain::Agent;
 use axon_core::Result;
 use axon_llm::LlmProvider;
 use axon_memory::MemoryStore;
 use axon_proto::Task;
+
+pub use heartbeat::{
+    Heartbeat, HeartbeatSender, HeartbeatSink, InMemoryHeartbeatSink, WorkerState,
+};
 
 /// Worker 配置 / worker configuration.
 #[derive(Debug, Clone)]
@@ -32,15 +41,41 @@ impl Default for WorkerConfig {
 /// Worker 入口:执行一个任务并回报 / run a single task to completion.
 ///
 /// 调用 `Agent::execute` 完成实际工作，并把 `AgentOutput` 转换为 `WorkReport`。
-/// M1 为单机进程内执行；M3 后 worker 将运行在 microVM 内。
+/// M3 在执行期间通过 [`HeartbeatSender`] 周期性上报状态。
 pub async fn run_task(
-    _config: &WorkerConfig,
+    config: &WorkerConfig,
     task: &Task,
     agent: &dyn Agent,
     llm: &dyn LlmProvider,
     memory: &dyn MemoryStore,
+    heartbeat_sink: Option<Arc<dyn HeartbeatSink>>,
 ) -> Result<WorkReport> {
-    let output = agent.execute(task, llm, memory).await?;
+    let _heartbeat_handle = if let Some(sink) = heartbeat_sink {
+        let interval = Duration::from_secs(config.heartbeat_interval_secs.max(1) as u64);
+        let sender = Arc::new(HeartbeatSender::new(
+            config.worker_id.clone(),
+            interval,
+            sink,
+        ));
+        let sender2 = sender.clone();
+        let task_id = task.id.clone();
+        let handle = tokio::spawn(async move {
+            sender2.run(task_id).await;
+        });
+        Some((sender, handle))
+    } else {
+        None
+    };
+
+    let output = agent.execute(task, llm, memory).await;
+
+    if let Some((sender, handle)) = _heartbeat_handle {
+        sender.stop();
+        // 忽略停止后的句柄,避免阻塞;心跳会再发一次最终状态后退出。
+        let _ = handle.await;
+    }
+
+    let output = output?;
     Ok(WorkReport {
         task_id: task.id.clone(),
         success: output.self_check_passed,
@@ -151,12 +186,41 @@ mod tests {
     async fn run_task_converts_output() {
         let config = WorkerConfig::default();
         let task = sample_task("t1");
-        let report = run_task(&config, &task, &MockAgent, &DummyLlm, &DummyMemory)
+        let report = run_task(&config, &task, &MockAgent, &DummyLlm, &DummyMemory, None)
             .await
             .unwrap();
         assert_eq!(report.task_id, "t1");
         assert!(report.success);
         assert_eq!(report.summary, "executed t1");
         assert_eq!(report.changed_files, vec!["file.txt"]);
+    }
+
+    /// 验证带心跳 sink 时,run_task 会触发心跳记录。
+    #[tokio::test]
+    async fn run_task_emits_heartbeats() {
+        let sink = Arc::new(heartbeat::InMemoryHeartbeatSink::new());
+        let config = WorkerConfig {
+            worker_id: "w-1".into(),
+            heartbeat_interval_secs: 1,
+        };
+        let task = sample_task("t1");
+
+        let report = run_task(
+            &config,
+            &task,
+            &MockAgent,
+            &DummyLlm,
+            &DummyMemory,
+            Some(sink.clone()),
+        )
+        .await
+        .unwrap();
+
+        assert!(report.success);
+        let records = sink.records().await;
+        assert!(!records.is_empty());
+        assert!(records
+            .iter()
+            .all(|b| b.task_id == "t1" && b.worker_id == "w-1"));
     }
 }

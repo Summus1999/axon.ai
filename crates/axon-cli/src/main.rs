@@ -116,7 +116,22 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::Memory { action } => handle_memory(action).await?,
         Commands::Vms => {
-            println!("(M1/M3:VM 列表留待实现)");
+            let records = axon_cli::list_vms()?;
+            if records.is_empty() {
+                println!("暂无运行中 VM");
+            } else {
+                println!("共 {} 个运行中 VM:", records.len());
+                for r in records {
+                    let hb = r
+                        .last_heartbeat_ms
+                        .map(|t| format!("{t}"))
+                        .unwrap_or_else(|| "-".into());
+                    println!(
+                        "  - [{}] {} | task={} | backend={} | created_at={} | heartbeat={}",
+                        r.vm_id, r.vm_id, r.task_id, r.backend, r.created_at, hb
+                    );
+                }
+            }
         }
     }
 

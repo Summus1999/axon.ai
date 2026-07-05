@@ -292,16 +292,16 @@ M2-T1(文档对齐)──► M2-T2(配置统一)──► M2-T3(GLM embedding)
 |----|------|------|------|
 | **M3-T1** | 扩展 `IsolationConfig` 与 `VmSpec`(Firecracker 路径/内核/rootfs/快照目录) | √ | `9649e87` |
 | **M3-T2** | Firecracker REST API 封装(spawn 进程 + socket + HTTP client) | √ | `9649e87` |
-| **M3-T3** | VM 生命周期:create/start/exec/destroy microVM | ○ | `9649e87` |
-| **M3-T4** | 快照创建与恢复 | × | — |
-| **M3-T5** | DockerProvider 资源限额补全(CPU/内存/网络) | × | — |
-| **M3-T6** | Worker 心跳上报 | × | — |
-| **M3-T7** | 调度大脑复核 Reviewer | × | — |
-| **M3-T8** | `axon vms` CLI + VM 状态跟踪 | × | — |
-| **M3-T9** | Linux CI Firecracker 集成测试 | × | — |
+| **M3-T3** | VM 生命周期:create/start/exec/destroy microVM | √ | `9649e87` |
+| **M3-T4** | 快照创建与恢复 | √ | `9649e87` |
+| **M3-T5** | DockerProvider 资源限额补全(CPU/内存/网络) | √ | — |
+| **M3-T6** | Worker 心跳上报 | √ | — |
+| **M3-T7** | 调度大脑复核 Reviewer | √ | — |
+| **M3-T8** | `axon vms` CLI + VM 状态跟踪 | √ | — |
+| **M3-T9** | Linux CI Firecracker 集成测试 | ○ | — |
 | **M3-T10** | 文档同步、验收与用户 review | × | — |
 
-> 状态符号:`×` 未做 / `○` 当前进度点(全文档唯一)/ `√` 已完成。当前 `○` 落在 **M3-T1**。
+> 状态符号:`×` 未做 / `○` 当前进度点(全文档唯一)/ `√` 已完成。当前 `○` 落在 **M3-T9**。
 
 ### 8.2 建议执行顺序(依赖关系)
 

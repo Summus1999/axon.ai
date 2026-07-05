@@ -10,14 +10,19 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
-use axon_brain::{Agent, ProfileExtractor};
+use std::time::Duration;
+
+use axon_brain::{Agent, ProfileExtractor, Reviewer, RuleReviewer, TaskOutput};
 use axon_core::{Result, TaskId};
-use axon_isolation::{Command as VmCommand, IsolationProvider, VmSpec};
+use axon_isolation::{Command as VmCommand, ExecOutput, IsolationProvider, VmSpec};
 use axon_llm::LlmProvider;
 use axon_memory::{Memory, MemoryKind, MemoryStore};
 use axon_proto::{Task, TaskState};
 
-use crate::{Scheduler, SchedulerConfig, TaskQueue};
+use crate::{
+    vm_registry::{InMemoryVmRegistry, SharedVmRegistry, VmState},
+    Scheduler, SchedulerConfig, TaskQueue,
+};
 
 /// 单个任务的执行结果 / execution result for one task.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,6 +49,8 @@ pub struct SimpleScheduler<I, A> {
     llm: Arc<dyn LlmProvider>,
     memory: Arc<dyn MemoryStore>,
     profile_extractor: Option<Arc<dyn ProfileExtractor>>,
+    reviewer: Arc<dyn Reviewer>,
+    vm_registry: SharedVmRegistry,
     config: SchedulerConfig,
     vm_spec: VmSpec,
     results: Arc<Mutex<Vec<TaskResult>>>,
@@ -58,6 +65,7 @@ where
     ///
     /// `vm_spec` 作为每个任务启动容器/VM 的模板规格。
     /// `profile_extractor` 为可选的画像提取器,任务成功时自动沉淀用户画像。
+    /// M3 新增 `reviewer` 与 `vm_registry`;若传 `None`,则使用默认规则复核与内存注册表。
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         queue: Arc<crate::InProcessQueue>,
@@ -69,6 +77,34 @@ where
         config: SchedulerConfig,
         vm_spec: VmSpec,
     ) -> Self {
+        Self::with_options(
+            queue,
+            isolation,
+            agent,
+            llm,
+            memory,
+            profile_extractor,
+            None::<Arc<dyn Reviewer>>,
+            None::<SharedVmRegistry>,
+            config,
+            vm_spec,
+        )
+    }
+
+    /// 带复核器与注册表创建调度器 / create with reviewer and VM registry.
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_options(
+        queue: Arc<crate::InProcessQueue>,
+        isolation: Arc<I>,
+        agent: Arc<A>,
+        llm: Arc<dyn LlmProvider>,
+        memory: Arc<dyn MemoryStore>,
+        profile_extractor: Option<Arc<dyn ProfileExtractor>>,
+        reviewer: Option<Arc<dyn Reviewer>>,
+        vm_registry: Option<SharedVmRegistry>,
+        config: SchedulerConfig,
+        vm_spec: VmSpec,
+    ) -> Self {
         Self {
             queue,
             isolation,
@@ -76,6 +112,8 @@ where
             llm,
             memory,
             profile_extractor,
+            reviewer: reviewer.unwrap_or_else(|| Arc::new(RuleReviewer::new())),
+            vm_registry: vm_registry.unwrap_or_else(|| Arc::new(InMemoryVmRegistry::new())),
             config,
             vm_spec,
             results: Arc::new(Mutex::new(vec![])),
@@ -97,11 +135,48 @@ where
             }
         };
 
+        // 注册 VM,便于 `axon vms` 查询。
+        if let Err(e) = self
+            .vm_registry
+            .register(VmState {
+                vm_id: vm.id.clone(),
+                backend: vm.backend,
+                task_id: task.id.clone(),
+                created_at: now_ms(),
+                last_heartbeat_ms: Some(now_ms()),
+            })
+            .await
+        {
+            tracing::warn!(error = %e, "failed to register vm");
+        }
+
+        // 启动心跳任务,周期性更新 VM 心跳。
+        let heartbeat_stop = Arc::new(tokio::sync::Notify::new());
+        let heartbeat_handle = {
+            let registry = self.vm_registry.clone();
+            let vm_id = vm.id.clone();
+            let stop = heartbeat_stop.clone();
+            let interval = Duration::from_secs(15);
+            tokio::spawn(async move {
+                loop {
+                    match tokio::time::timeout(interval, stop.notified()).await {
+                        Ok(()) => break,
+                        Err(_) => {
+                            let _ = registry.heartbeat(&vm_id, now_ms()).await;
+                        }
+                    }
+                }
+            })
+        };
+
         // Agent 生成要在容器内执行的命令。
         let agent_output = match self.agent.execute(&task, &*self.llm, &*self.memory).await {
             Ok(out) => out,
             Err(e) => {
-                let _ = self.isolation.destroy(vm).await;
+                heartbeat_stop.notify_one();
+                let _ = heartbeat_handle.await;
+                let _ = self.isolation.destroy(vm.clone()).await;
+                let _ = self.vm_registry.unregister(&vm.id).await;
                 self.queue.update_state(&task.id, TaskState::Failed).await?;
                 return Err(e);
             }
@@ -116,29 +191,78 @@ where
         tracing::info!(command = %agent_output.summary, "executing generated command");
 
         let exec_result = self.isolation.exec(&vm, command).await;
-        let (state, result_opt) = match &exec_result {
-            Ok(out) => (
-                if out.exit_code == 0 {
+
+        // 停止心跳。
+        heartbeat_stop.notify_one();
+        let _ = heartbeat_handle.await;
+
+        let exec_output = match &exec_result {
+            Ok(out) => out.clone(),
+            Err(_) => ExecOutput {
+                exit_code: -1,
+                stdout: String::new(),
+                stderr: String::new(),
+            },
+        };
+
+        if exec_output.exit_code != 0 || !agent_output.self_check_passed {
+            self.results.lock().await.push(TaskResult {
+                task_id: task.id.clone(),
+                exit_code: exec_output.exit_code,
+                stdout: exec_output.stdout.clone(),
+                stderr: exec_output.stderr.clone(),
+            });
+            if let Err(e) = self.isolation.destroy(vm.clone()).await {
+                tracing::warn!(error = %e, "failed to destroy vm");
+            }
+            let _ = self.vm_registry.unregister(&vm.id).await;
+            self.queue.update_state(&task.id, TaskState::Failed).await?;
+            return exec_result.map(|_| ());
+        }
+
+        // 调度大脑复核。
+        let review_input = TaskOutput {
+            exit_code: exec_output.exit_code,
+            stdout: exec_output.stdout.clone(),
+            stderr: exec_output.stderr.clone(),
+            summary: agent_output.summary.clone(),
+            log: agent_output.log.clone(),
+            self_check_passed: agent_output.self_check_passed,
+        };
+        let review = self.reviewer.review(&task, &review_input, &*self.llm).await;
+
+        let state = match review {
+            Ok(axon_brain::ReviewResult::Accept) => TaskState::Completed,
+            Ok(axon_brain::ReviewResult::Reject { reason }) => {
+                tracing::warn!(reason = %reason, "reviewer rejected task output");
+                TaskState::Failed
+            }
+            Ok(axon_brain::ReviewResult::Retry { reason }) => {
+                tracing::warn!(reason = %reason, "reviewer requested retry");
+                TaskState::Failed
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "review failed, falling back to exec result");
+                if exec_output.exit_code == 0 {
                     TaskState::Completed
                 } else {
                     TaskState::Failed
-                },
-                Some(out.clone()),
-            ),
-            Err(_) => (TaskState::Failed, None),
+                }
+            }
         };
 
-        if let Some(out) = result_opt {
-            self.results.lock().await.push(TaskResult {
-                task_id: task.id.clone(),
-                exit_code: out.exit_code,
-                stdout: out.stdout,
-                stderr: out.stderr,
-            });
-        }
+        self.results.lock().await.push(TaskResult {
+            task_id: task.id.clone(),
+            exit_code: exec_output.exit_code,
+            stdout: exec_output.stdout,
+            stderr: exec_output.stderr,
+        });
 
-        if let Err(e) = self.isolation.destroy(vm).await {
+        if let Err(e) = self.isolation.destroy(vm.clone()).await {
             tracing::warn!(error = %e, "failed to destroy vm");
+        }
+        if let Err(e) = self.vm_registry.unregister(&vm.id).await {
+            tracing::warn!(error = %e, "failed to unregister vm");
         }
         self.queue.update_state(&task.id, state).await?;
 
@@ -190,7 +314,7 @@ where
             }
         }
 
-        exec_result.map(|_| ())
+        Ok(())
     }
 }
 

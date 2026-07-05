@@ -7,6 +7,7 @@
 
 pub mod in_process_queue;
 pub mod simple_scheduler;
+pub mod vm_registry;
 
 use async_trait::async_trait;
 

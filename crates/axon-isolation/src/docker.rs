@@ -50,31 +50,17 @@ impl DockerProvider {
         }
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     }
-}
 
-#[async_trait]
-impl IsolationProvider for DockerProvider {
-    fn backend(&self) -> Backend {
-        Backend::Docker
-    }
-
-    async fn create_vm(&self, spec: VmSpec) -> Result<VmHandle> {
-        let vm_id = axon_core::new_id();
-        let image = if spec.rootfs.is_empty() {
-            "alpine:latest".into()
-        } else {
-            spec.rootfs
-        };
-
-        // 预拉镜像，避免 run 时首次拉取超时 / pull image explicitly.
-        self.docker(&["pull".into(), image.clone()]).await?;
-
+    /// 根据 `VmSpec` 构建 `docker run` 参数(不含 image 与命令)/ build docker run args.
+    ///
+    /// 提取为独立方法以便单元测试验证资源限制参数。
+    fn build_run_args(&self, vm_id: &str, spec: &VmSpec) -> Vec<String> {
         let mut args = vec![
             "run".into(),
             "-d".into(),
             "--rm".into(),
             "--name".into(),
-            vm_id.clone(),
+            vm_id.into(),
         ];
 
         if !spec.network {
@@ -100,8 +86,33 @@ impl IsolationProvider for DockerProvider {
         if spec.mem_mb > 0 {
             args.push("-m".into());
             args.push(format!("{}m", spec.mem_mb));
+            // 禁止 swap,避免任务因 swap 拖慢或泄漏到磁盘。
+            args.push("--memory-swap".into());
+            args.push(format!("{}m", spec.mem_mb));
         }
 
+        args
+    }
+}
+
+#[async_trait]
+impl IsolationProvider for DockerProvider {
+    fn backend(&self) -> Backend {
+        Backend::Docker
+    }
+
+    async fn create_vm(&self, spec: VmSpec) -> Result<VmHandle> {
+        let vm_id = axon_core::new_id();
+        let image = if spec.rootfs.is_empty() {
+            "alpine:latest".into()
+        } else {
+            spec.rootfs.clone()
+        };
+
+        // 预拉镜像，避免 run 时首次拉取超时 / pull image explicitly.
+        self.docker(&["pull".into(), image.clone()]).await?;
+
+        let mut args = self.build_run_args(&vm_id, &spec);
         args.push(image);
         // 让容器保持运行，便于后续 docker exec。
         args.push("sleep".into());
@@ -197,5 +208,49 @@ mod tests {
         };
         let err = provider.snapshot(&vm).await.unwrap_err();
         assert!(matches!(err, Error::Isolation(_)));
+    }
+
+    /// 验证 `build_run_args` 正确生成资源限制参数。
+    #[test]
+    fn run_args_apply_resource_limits() {
+        let provider = DockerProvider::new();
+        let spec = VmSpec {
+            vcpus: 2,
+            mem_mb: 512,
+            rootfs: "alpine:latest".into(),
+            kernel: None,
+            workspace: Some("/tmp/ws".into()),
+            env: vec![("FOO".into(), "bar".into())],
+            network: false,
+        };
+
+        let args = provider.build_run_args("vm-42", &spec);
+        let args = args.join(" ");
+
+        assert!(args.contains("--name vm-42"));
+        assert!(args.contains("--network none"));
+        assert!(args.contains("-v /tmp/ws:/workspace"));
+        assert!(args.contains("-e FOO=bar"));
+        assert!(args.contains("--cpus 2"));
+        assert!(args.contains("-m 512m"));
+        assert!(args.contains("--memory-swap 512m"));
+    }
+
+    /// 验证 `network = true` 时不加 `--network none`。
+    #[test]
+    fn run_args_allow_network() {
+        let provider = DockerProvider::new();
+        let spec = VmSpec {
+            vcpus: 1,
+            mem_mb: 256,
+            rootfs: "alpine:latest".into(),
+            kernel: None,
+            workspace: None,
+            env: vec![],
+            network: true,
+        };
+
+        let args = provider.build_run_args("vm-net", &spec).join(" ");
+        assert!(!args.contains("--network none"));
     }
 }

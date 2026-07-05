@@ -9,6 +9,7 @@
 
 pub mod command_agent;
 pub mod profile_extractor;
+pub mod reviewer;
 pub mod simple_planner;
 
 use async_trait::async_trait;
@@ -20,6 +21,7 @@ use axon_proto::Task;
 
 pub use command_agent::CommandAgent;
 pub use profile_extractor::{LlmProfileExtractor, ProfileExtractor};
+pub use reviewer::{LlmReviewer, ReviewResult, Reviewer, RuleReviewer, TaskOutput};
 pub use simple_planner::SimplePlanner;
 
 /// 用户下达的高层目标 / a high-level goal from the user.
