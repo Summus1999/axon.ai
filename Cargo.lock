@@ -200,14 +200,19 @@ dependencies = [
  "axon-llm",
  "axon-memory",
  "axon-proto",
+ "axon-queue",
  "axon-worker",
+ "axum",
  "clap",
+ "futures",
+ "reqwest",
  "serde",
  "serde_json",
  "tempfile",
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]

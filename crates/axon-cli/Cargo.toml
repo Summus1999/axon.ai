@@ -19,17 +19,22 @@ axon-brain.workspace = true
 axon-dispatcher.workspace = true
 axon-isolation.workspace = true
 axon-proto.workspace = true
+axon-queue.workspace = true
 axon-worker.workspace = true
 clap.workspace = true
 anyhow.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+uuid.workspace = true
+futures.workspace = true
 
 [features]
 e2e-real = []
 
 [dev-dependencies]
 tempfile.workspace = true
+axum.workspace = true

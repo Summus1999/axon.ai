@@ -16,6 +16,14 @@ struct Cli {
     #[arg(short, long)]
     verbose: bool,
 
+    /// NATS server URL(远程模式使用)/ NATS server URL for remote mode.
+    #[arg(long, default_value = "nats://localhost:4222")]
+    nats_url: String,
+
+    /// Dispatcher HTTP URL(远程模式使用)/ dispatcher HTTP URL for remote mode.
+    #[arg(long, default_value = "http://localhost:8080")]
+    dispatcher_url: String,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -27,9 +35,22 @@ enum Commands {
         /// 任务描述 / goal description.
         #[arg(short, long)]
         goal: String,
+        /// 提交到远程分布式队列(而非单机调度)/ submit to remote queue instead of local scheduler.
+        #[arg(long)]
+        remote: bool,
     },
     /// 查看任务状态 / list tasks / show task status.
-    Tasks,
+    Tasks {
+        /// 查询远程 dispatcher / query remote dispatcher.
+        #[arg(long)]
+        remote: bool,
+    },
+    /// 查看 worker 节点状态 / list worker nodes.
+    Workers {
+        /// 查询远程 dispatcher / query remote dispatcher.
+        #[arg(long)]
+        remote: bool,
+    },
     /// 记忆管理 / memory management.
     Memory {
         #[command(subcommand)]
@@ -83,35 +104,69 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt().with_env_filter(level).init();
 
     match cli.command {
-        Commands::Run { goal } => {
-            let results =
-                axon_cli::run_goal(&goal, std::path::Path::new("."), "rust:latest").await?;
-            println!("✓ 任务调度完成，共 {} 个结果", results.len());
-            for r in results {
+        Commands::Run { goal, remote } => {
+            if remote {
+                let result =
+                    axon_cli::run_remote(&goal, &cli.nats_url, &cli.dispatcher_url).await?;
                 println!(
-                    "  - 任务 {}: exit_code={}\n    stdout: {}\n    stderr: {}",
-                    r.task_id, r.exit_code, r.stdout, r.stderr
+                    "✓ 远程任务 {} 完成: success={}\nsummary: {}",
+                    result.task_id, result.success, result.summary
                 );
+            } else {
+                let results =
+                    axon_cli::run_goal(&goal, std::path::Path::new("."), "rust:latest").await?;
+                println!("✓ 任务调度完成，共 {} 个结果", results.len());
+                for r in results {
+                    println!(
+                        "  - 任务 {}: exit_code={}\n    stdout: {}\n    stderr: {}",
+                        r.task_id, r.exit_code, r.stdout, r.stderr
+                    );
+                }
             }
         }
-        Commands::Tasks => {
-            let records = axon_cli::list_tasks()?;
-            if records.is_empty() {
-                println!("暂无任务记录，先运行 `axon run --goal ...`");
-            } else {
-                println!("共 {} 条任务记录:", records.len());
+        Commands::Tasks { remote } => {
+            if remote {
+                let records = axon_cli::list_remote_tasks(&cli.dispatcher_url).await?;
+                println!("共 {} 条远程任务记录:", records.len());
                 for r in records {
                     println!(
-                        "  - [{}] {} | status={} | exit_code={} | finished_at={}",
-                        r.task_id, r.task_id, r.status, r.exit_code, r.finished_at
+                        "  - [{}] {} | state={:?} | worker={:?}",
+                        r.task_id, r.title, r.state, r.worker_id
                     );
-                    if !r.stdout.is_empty() {
-                        println!("    stdout: {}", r.stdout.lines().next().unwrap_or(""));
-                    }
-                    if !r.stderr.is_empty() {
-                        println!("    stderr: {}", r.stderr.lines().next().unwrap_or(""));
+                }
+            } else {
+                let records = axon_cli::list_tasks()?;
+                if records.is_empty() {
+                    println!("暂无任务记录，先运行 `axon run --goal ...`");
+                } else {
+                    println!("共 {} 条任务记录:", records.len());
+                    for r in records {
+                        println!(
+                            "  - [{}] {} | status={} | exit_code={} | finished_at={}",
+                            r.task_id, r.task_id, r.status, r.exit_code, r.finished_at
+                        );
+                        if !r.stdout.is_empty() {
+                            println!("    stdout: {}", r.stdout.lines().next().unwrap_or(""));
+                        }
+                        if !r.stderr.is_empty() {
+                            println!("    stderr: {}", r.stderr.lines().next().unwrap_or(""));
+                        }
                     }
                 }
+            }
+        }
+        Commands::Workers { remote } => {
+            if remote {
+                let workers = axon_cli::list_remote_workers(&cli.dispatcher_url).await?;
+                println!("共 {} 个远程 worker:", workers.len());
+                for w in workers {
+                    println!(
+                        "  - [{}] {} | state={:?} | task={:?} | load={} | heartbeat={}",
+                        w.worker_id, w.worker_id, w.state, w.task_id, w.load, w.last_heartbeat_ms
+                    );
+                }
+            } else {
+                println!("本地 worker 列表暂不支持;请使用 `axon workers --remote`.");
             }
         }
         Commands::Memory { action } => handle_memory(action).await?,
@@ -227,7 +282,10 @@ mod tests {
     fn cli_parses_run_command() {
         let cli = Cli::parse_from(["axon", "run", "--goal", "create a file"]);
         match cli.command {
-            Commands::Run { goal } => assert_eq!(goal, "create a file"),
+            Commands::Run { goal, remote } => {
+                assert_eq!(goal, "create a file");
+                assert!(!remote);
+            }
             _ => panic!("expected Run command"),
         }
     }

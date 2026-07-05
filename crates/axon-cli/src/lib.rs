@@ -10,12 +10,17 @@ use std::sync::Arc;
 use axon_brain::{CommandAgent, Goal, Planner, SimplePlanner};
 use axon_core::Config;
 use axon_dispatcher::{
-    vm_registry::InMemoryVmRegistry, InProcessQueue, Scheduler, SchedulerConfig, SimpleScheduler,
-    TaskResult,
+    remote_dispatcher::{TaskRecord as RemoteTaskRecord, WorkerRecord as RemoteWorkerRecord},
+    vm_registry::InMemoryVmRegistry,
+    InProcessQueue, Scheduler, SchedulerConfig, SimpleScheduler, TaskResult,
 };
 use axon_isolation::{DockerProvider, VmSpec};
 use axon_memory::{HybridMemoryStore, InMemoryStore, MemoryStore, QdrantStore, RedbStore};
+use axon_proto::{Priority, Task, TaskState};
+use axon_queue::{NatsQueue, RemoteTaskResult, ResultFilter, TaskQueue};
+use futures::StreamExt;
 use serde::{Deserialize, Serialize};
+use tokio::time::{timeout, Duration};
 
 /// 根据全局配置创建记忆存储 / create a memory store from the global config.
 ///
@@ -241,6 +246,87 @@ pub fn list_tasks() -> anyhow::Result<Vec<TaskRecord>> {
     Ok(records)
 }
 
+/// 生成唯一任务 id / generate a unique task id.
+fn generate_task_id() -> String {
+    format!("task-{}", uuid::Uuid::new_v4())
+}
+
+/// 提交一个远程任务到 NATS 队列并等待结果 / submit a remote task and wait for its result.
+///
+/// `goal` 会被直接作为任务标题与描述;`nats_url` 用于任务投递与结果订阅;
+/// `dispatcher_url` 当前保留给未来 HTTP 状态查询,本函数暂未使用。
+pub async fn run_remote(
+    goal: &str,
+    nats_url: &str,
+    _dispatcher_url: &str,
+) -> anyhow::Result<RemoteTaskResult> {
+    let queue = Arc::new(NatsQueue::connect(nats_url).await?);
+    run_remote_with_queue(goal, queue).await
+}
+
+/// 使用给定队列提交远程任务并等待结果 / submit a remote task using the provided queue.
+///
+/// 将底层队列实现与 CLI 流程解耦,便于单元测试使用内存队列。
+async fn run_remote_with_queue(
+    goal: &str,
+    queue: Arc<dyn TaskQueue>,
+) -> anyhow::Result<RemoteTaskResult> {
+    run_remote_with_queue_and_id(goal, queue, generate_task_id(), Duration::from_secs(60)).await
+}
+
+/// 使用给定队列与指定任务 id 提交远程任务并等待结果 / submit a remote task with explicit id.
+///
+/// `timeout_dur` 控制等待结果的最大时长,便于测试使用较短超时。
+async fn run_remote_with_queue_and_id(
+    goal: &str,
+    queue: Arc<dyn TaskQueue>,
+    task_id: String,
+    timeout_dur: Duration,
+) -> anyhow::Result<RemoteTaskResult> {
+    let task = Task {
+        id: task_id.clone(),
+        parent: None,
+        title: goal.into(),
+        description: goal.into(),
+        priority: Priority::Normal,
+        state: TaskState::Queued,
+        dependencies: vec![],
+        created_at: now_ms(),
+        updated_at: now_ms(),
+        acceptance: vec![],
+    };
+
+    queue.submit(task).await?;
+    tracing::info!(%task_id, "远程任务已提交到队列");
+
+    let mut stream = queue
+        .subscribe_results(ResultFilter::Task(task_id.clone()))
+        .await?;
+    let result = timeout(timeout_dur, stream.next())
+        .await
+        .map_err(|_| anyhow::anyhow!("等待远程任务 {task_id} 结果超时"))?;
+
+    match result {
+        Some(Ok(r)) => Ok(r),
+        Some(Err(e)) => Err(anyhow::anyhow!("结果流返回错误: {e}")),
+        None => Err(anyhow::anyhow!("结果流在收到结果前已关闭")),
+    }
+}
+
+/// 从远程 dispatcher 查询任务列表 / list remote tasks from the dispatcher HTTP API.
+pub async fn list_remote_tasks(dispatcher_url: &str) -> anyhow::Result<Vec<RemoteTaskRecord>> {
+    let url = format!("{dispatcher_url}/tasks");
+    let records: Vec<RemoteTaskRecord> = reqwest::get(&url).await?.json().await?;
+    Ok(records)
+}
+
+/// 从远程 dispatcher 查询 worker 列表 / list remote workers from the dispatcher HTTP API.
+pub async fn list_remote_workers(dispatcher_url: &str) -> anyhow::Result<Vec<RemoteWorkerRecord>> {
+    let url = format!("{dispatcher_url}/workers");
+    let records: Vec<RemoteWorkerRecord> = reqwest::get(&url).await?.json().await?;
+    Ok(records)
+}
+
 fn now_rfc3339() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
@@ -249,9 +335,20 @@ fn now_rfc3339() -> String {
         .unwrap_or_else(|_| "0".into())
 }
 
+fn now_ms() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
     use std::sync::Mutex;
+
+    use axon_queue::{InProcessQueue, WorkerState};
 
     use super::*;
 
@@ -392,5 +489,120 @@ mod tests {
         assert_eq!(loaded[0].backend, "docker");
 
         std::env::set_current_dir(original).unwrap();
+    }
+
+    /// 远程任务提交后收到结果 / remote task receives its result from the queue.
+    #[tokio::test]
+    async fn run_remote_with_queue_returns_result() {
+        let queue = Arc::new(InProcessQueue::new());
+        let queue_clone = Arc::clone(&queue);
+        let task_id = "task-1".to_string();
+        let task_id_for_complete = task_id.clone();
+
+        // 在后台模拟 worker:任务入队后发布匹配 task_id 的结果。
+        let handle = tokio::spawn(async move {
+            // 给订阅方一点时间建立。
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            queue_clone
+                .complete(RemoteTaskResult {
+                    task_id: task_id_for_complete,
+                    worker_id: "worker-1".into(),
+                    success: true,
+                    summary: "done".into(),
+                    stdout: String::new(),
+                    stderr: String::new(),
+                    exit_code: 0,
+                    completed_at_ms: 100,
+                })
+                .await
+                .unwrap();
+        });
+
+        let result =
+            run_remote_with_queue_and_id("test goal", queue, task_id, Duration::from_secs(1))
+                .await
+                .expect("应收到结果");
+        handle.await.unwrap();
+
+        assert!(result.success);
+        assert_eq!(result.worker_id, "worker-1");
+    }
+
+    /// 远程任务在结果流关闭时返回错误 / run_remote reports error when result stream closes early.
+    #[tokio::test]
+    async fn run_remote_reports_error_on_closed_stream() {
+        let queue = Arc::new(InProcessQueue::new());
+        let result = run_remote_with_queue_and_id(
+            "closed stream",
+            queue,
+            "task-x".into(),
+            Duration::from_millis(100),
+        )
+        .await;
+        assert!(result.is_err(), "空队列无结果,应返回超时错误");
+    }
+
+    /// 从 dispatcher HTTP API 拉取任务列表 / list_remote_tasks fetches tasks from HTTP endpoint.
+    #[tokio::test]
+    async fn list_remote_tasks_returns_records() {
+        let app = axum::Router::new().route(
+            "/tasks",
+            axum::routing::get(|| async {
+                axum::Json(vec![RemoteTaskRecord {
+                    task_id: "t1".into(),
+                    state: TaskState::Queued,
+                    title: "task".into(),
+                    description: "desc".into(),
+                    worker_id: None,
+                    created_at_ms: 1,
+                    updated_at_ms: 2,
+                }])
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let url = format!("http://{addr}");
+        let records = list_remote_tasks(&url).await.unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].task_id, "t1");
+    }
+
+    /// 从 dispatcher HTTP API 拉取 worker 列表 / list_remote_workers fetches workers from HTTP endpoint.
+    #[tokio::test]
+    async fn list_remote_workers_returns_records() {
+        let app = axum::Router::new().route(
+            "/workers",
+            axum::routing::get(|| async {
+                axum::Json(vec![RemoteWorkerRecord {
+                    worker_id: "w1".into(),
+                    state: WorkerState::Idle,
+                    task_id: None,
+                    last_heartbeat_ms: 100,
+                    load: 0,
+                    registered_at_ms: 1,
+                }])
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let url = format!("http://{addr}");
+        let workers = list_remote_workers(&url).await.unwrap();
+        assert_eq!(workers.len(), 1);
+        assert_eq!(workers[0].worker_id, "w1");
+    }
+
+    /// 无法连接的 dispatcher URL 返回错误 / list_remote_tasks reports error for unreachable URL.
+    #[tokio::test]
+    async fn list_remote_tasks_reports_unreachable_error() {
+        let result = list_remote_tasks("http://127.0.0.1:1").await;
+        assert!(result.is_err(), "不可达地址应返回错误");
     }
 }
