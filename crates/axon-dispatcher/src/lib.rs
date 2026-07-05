@@ -6,6 +6,7 @@
 //! 一期为进程内队列 + 调度器;二期(M4)接入 NATS 支持跨节点。
 
 pub mod in_process_queue;
+pub mod remote_dispatcher;
 pub mod simple_scheduler;
 pub mod vm_registry;
 

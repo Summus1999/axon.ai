@@ -83,7 +83,8 @@ tempfile = "3"
 clap = { version = "4", features = ["derive"] }
 
 # Web 框架 / web framework
-axum = "0.7"
+axum = { version = "0.7", features = ["ws"] }
+tower-http = { version = "0.6", features = ["fs"] }
 
 # 内部 crate / internal crates (path + version, 供成员统一引用)
 axon-core = { version = "0.1.0", path = "crates/axon-core" }
